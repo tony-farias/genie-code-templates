@@ -46,6 +46,14 @@ Recreate the Monday Morning retail-intelligence app without assuming that every 
 - Parameterize catalog, schema, warehouse, Genie IDs, model endpoint and Lakebase settings.
 - Use least-privilege grants for the app service principal.
 - Make destructive replacement or cleanup a separate approved step.
+- **Resolve the warehouse ID** during deployment by listing warehouses (`w.warehouses.list()`) and selecting a running serverless SQL warehouse. Never leave a placeholder — it causes all SQL endpoints to 500.
+- **Use SDK-typed ChatMessage objects** when calling `serving_endpoints.query()`. Plain dicts raise `AttributeError: 'dict' object has no attribute 'as_dict'` at runtime. Import `ChatMessage` and `ChatMessageRole` from `databricks.sdk.service.serving`.
+- **Grant the app SP access before first visit.** Use the `application_id` UUID (from `apps get`) in backtick-quoted GRANT statements:
+  - `USE CATALOG` on the catalog — **required** (not optional). If the deploying user lacks MANAGE on the source catalog, create a new catalog you own, build views pointing to the source tables, and grant USE CATALOG there. Views avoid duplicating billion-row fact tables.
+  - `USE SCHEMA` and `SELECT` on the curated schema.
+  - If catalog creation via SQL fails with "use the UI to create a catalog with Default Storage", the user must create it in Catalog Explorer UI, then you proceed with schema/views/grants programmatically.
+- **Set `user_api_scopes` on the app.** Without explicit scopes, the app defaults to `iam.access-control:read` + `iam.current-user:read` only — which blocks SQL, Genie, and model-serving calls. After creating the app, call `w.apps.update(name=..., app=App(name=..., user_api_scopes=["sql", "genie"]))` to enable SQL warehouse and Genie access. This is the #1 cause of `PermissionDenied` on the warehouse.
+- **Bind resources via the Apps API, NOT `app.yaml`.** The `resources` section in `app.yaml` is silently ignored. Use `w.apps.update(name=..., app=App(name=..., resources=[AppResource(name="sql-warehouse", sql_warehouse=AppResourceSqlWarehouse(id="<warehouse_id>", permission=...CAN_USE)), AppResource(name="serving-endpoint", serving_endpoint=AppResourceServingEndpoint(name="<endpoint>", permission=...CAN_QUERY))]))`. Without this, the SP has zero resource access regardless of manual grants.
 
 ## Application source
 
