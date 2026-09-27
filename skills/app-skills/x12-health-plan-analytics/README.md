@@ -131,6 +131,115 @@ Unity Catalog tables or views
 
 The parser is pinned to commit `ac6d84d3f322310816a55a43569242afe295b4c5` and invoked through `from_edi_exploded`. The parser job uses a small classic cluster because its final JSON materialization depends on Spark RDD APIs. Discovery, App queries, and Genie use serverless SQL.
 
+## Databricks permissions and compute dependencies
+
+The solution uses four distinct identities. Do not give every identity the union of all privileges:
+
+1. **Deployment identity** — the user or service principal running the CLI and deployment scripts.
+2. **Parser job run identity** — the identity under which the bundle job executes. Unless `run_as` is added, this is normally the bundle deployer or job owner.
+3. **App service principal** — created and managed by Databricks Apps for fixed dashboard and SIU queries.
+4. **Viewer identity** — the signed-in App user whose forwarded token is used only for interactive Genie requests.
+
+### Required workspace capabilities
+
+| Capability | Requirement |
+|---|---|
+| Unity Catalog | The workspace must be attached to a Unity Catalog metastore. The source and destination catalogs must already exist; this project does not create catalogs. |
+| Databricks SQL | One Unity Catalog-enabled SQL warehouse is required. Serverless SQL is recommended. The same warehouse can serve discovery, verification, grants, App queries, and Genie. |
+| Classic jobs compute | Classic all-purpose/job compute must be allowed because the pinned parser materializes Spark RDDs that are unavailable through serverless Spark Connect. |
+| Databricks Apps | Apps and serverless Apps compute must be enabled in the workspace. |
+| AI/BI Genie | Genie must be enabled, and the deployment identity must be allowed to create or update a Space. |
+| Workspace files | The deployment identity needs write access to its bundle root and App staging path under `/Workspace/Users/<user>/`. |
+| Network egress | The parser cluster needs outbound HTTPS access to GitHub and Python package infrastructure to install the pinned `git+https` parser dependency. |
+
+### Deployment identity permissions
+
+| Stage | Required permissions |
+|---|---|
+| Authenticate | Workspace access and a named Databricks CLI profile for the intended workspace. |
+| Discover source data | `CAN USE` on the selected SQL warehouse; `USE CATALOG` and `USE SCHEMA`; and `SELECT` on candidate source tables or views. Discovery is read-only. |
+| Create the destination schema | `USE CATALOG` plus `CREATE SCHEMA` on the destination catalog when the schema does not already exist. If it exists, `USE SCHEMA` is required. |
+| Publish pipeline tables | `CREATE TABLE` on the destination schema. For an existing deployment, the job identity must also own the output tables or have sufficient `MODIFY`/`MANAGE` authority to overwrite their schemas and set table properties. |
+| Deploy the bundle job | Permission to create jobs, or `CAN MANAGE` on the existing job; permission to create classic job compute or use the customer-approved cluster policy and node type. |
+| Use the parser job | `CAN MANAGE RUN` or stronger on the deployed job when the runner is different from the job owner. |
+| Verify outputs | `CAN USE` on the SQL warehouse plus `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the generated Bronze, Silver, and Gold tables and relevant `information_schema` metadata. |
+| Create or update Genie | Permission to create a Genie Space in the deployment identity's workspace folder, or `CAN MANAGE` on the existing Space; `CAN USE` on the warehouse; and `SELECT` on all configured Gold tables. |
+| Create or update the App | Permission to create Databricks Apps, or `CAN MANAGE` on the existing App; `CAN USE` on the bound SQL warehouse; and write access to the App source path in Workspace Files. |
+| Grant App data access | The deployment identity must own or have `MANAGE` authority on the destination catalog, schema, and Gold tables so it can grant the App service principal `USE CATALOG`, `USE SCHEMA`, and `SELECT`. If it cannot grant those privileges, a Unity Catalog owner or metastore administrator must perform this step. |
+
+If a separate service principal is configured as the job `run_as` identity, grant that principal the source and destination Unity Catalog permissions above. Granting them only to the person who deploys the bundle is not sufficient.
+
+### Optional synthetic-source permissions
+
+The fictional test-data path is optional and is not needed when an approved customer source already exists.
+
+| Operation | Required permissions |
+|---|---|
+| Create the test Volume | `USE CATALOG`, `USE SCHEMA`, and `CREATE VOLUME` on the approved schema. |
+| Upload JSONL | `WRITE VOLUME` on an existing Volume. The creator of a new Volume receives ownership automatically. |
+| Read JSONL with `read_files` | `READ VOLUME` on an existing Volume. |
+| Create or replace the synthetic source table | `CREATE TABLE` on the schema and ownership or `MODIFY` authority when replacing an existing table. |
+| Execute setup SQL | `CAN USE` on the selected SQL warehouse. |
+
+### Parser job run identity
+
+The job reads the confirmed source and creates or overwrites Bronze, Silver, and Gold Delta tables. Its run identity therefore needs:
+
+- `USE CATALOG` and `USE SCHEMA` on the source namespace;
+- `SELECT` on the confirmed source table or view;
+- `USE CATALOG` and `CREATE SCHEMA` on the destination catalog because the parser notebook executes `CREATE SCHEMA IF NOT EXISTS`;
+- `USE SCHEMA` on the destination schema once it exists;
+- `CREATE TABLE` on the destination schema;
+- ownership or sufficient `MODIFY`/`MANAGE` authority for previously created output tables;
+- permission to use the configured classic compute policy and node type.
+
+The run identity does not need access to Databricks Apps or Genie.
+
+### App service principal
+
+`scripts/deploy_app.py` creates or updates the App, retrieves its Databricks-managed service principal, binds the selected warehouse with `CAN USE`, and grants only:
+
+- `USE CATALOG` on the destination catalog;
+- `USE SCHEMA` on the destination schema;
+- `SELECT` on the seven configured Gold tables: `claims`, `claim_lines`, `members`, `providers`, `payments`, `enrollments`, and `data_quality`.
+
+The App service principal must not receive `SELECT` on the customer source, Bronze raw X12, Silver parser JSON, or quarantine tables.
+
+### App viewer permissions
+
+| App capability | Viewer requirements |
+|---|---|
+| Dashboard and SIU Workbench | `CAN USE` on the Databricks App. These fixed SQL routes execute as the App service principal, so viewers do not inherit access to Bronze or Silver data. |
+| Embedded Genie | `CAN USE` on the App, permission to run the configured Genie Space, `CAN USE` on its SQL warehouse, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the configured Gold tables. |
+| Forwarded identity | The App requests only the `dashboards.genie` user API scope. A missing or denied viewer token is returned as an error and is never replaced with the App service-principal identity. |
+
+Share the App and Genie Space with the intended users or groups after deployment. Creation does not automatically grant every workspace user access.
+
+### Compute configuration
+
+| Component | Required configuration | Purpose |
+|---|---|---|
+| X12 parser job | Databricks Runtime `16.4.x-scala2.12`, `SINGLE_USER` data security mode, Standard runtime engine, one worker, and one driver | Runs structural validation, the pinned parser, normalization, and Bronze/Silver/Gold publication |
+| Default AWS node type | `m5d.large` for both driver and worker | Repository default for the small demonstration workload |
+| Azure or GCP deployment | Override `node_type_id` with an available equivalent permitted by the customer's cluster policy | The default `m5d.large` identifier is AWS-specific |
+| SQL warehouse | One running Unity Catalog-enabled warehouse; Serverless is recommended | Discovery, optional source loading, verification, grants, App SQL, and Genie SQL |
+| Databricks Apps compute | Databricks-managed serverless Apps compute | Runs the FastAPI application and installs its pinned Python runtime dependencies |
+| Genie | Uses the configured SQL warehouse; no separate Spark cluster is required | Generates and executes governed SQL over Gold tables |
+
+The bundle limits the parser job to one concurrent run and a one-hour task timeout. Larger source volumes may require a larger driver/worker node type, more workers, or a longer timeout; those changes should be made through bundle variables or an approved customer cluster policy rather than by changing the App template.
+
+### Runtime and build dependencies
+
+| Location | Dependencies |
+|---|---|
+| Parser cluster | Spark/PySpark from DBR 16.4 and `databricksx12` installed from the pinned GitHub commit |
+| App runtime | Python, `fastapi==0.115.12`, `uvicorn[standard]==0.34.2`, and `databricks-sdk==0.60.0` |
+| Deployment workstation | A current Databricks CLI exposing `bundle`, `apps`, `sync`, and `fs`; Python 3.10+; and `databricks-sdk==0.60.0` |
+| Frontend build | Node.js 20 LTS and npm; React 19.1, TypeScript 5.8.3, and Vite 6.4.3 are locked in `package-lock.json` |
+| Optional visual regression | Chrome or Chromium plus ImageMagick's `magick` executable |
+
+No GPU, Model Serving endpoint, Vector Search index, Lakebase database, or serverless Spark pipeline is required for this solution.
+
 ## Deployment workflow
 
 1. Authenticate to the customer workspace and select a SQL warehouse.
