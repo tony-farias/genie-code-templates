@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tony-farias/x12pipeline-app-deploy-skill/app-config.schema.json",
+  "title": "Health Plan Analytics App Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "template_version",
+    "catalog",
+    "schema",
+    "warehouse_id",
+    "genie_space_id",
+    "genie_url",
+    "branding",
+    "benchmark",
+    "features",
+    "tables"
+  ],
+  "properties": {
+    "template_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "catalog": { "type": "string", "minLength": 1 },
+    "schema": { "type": "string", "minLength": 1 },
+    "warehouse_id": { "type": "string", "minLength": 1 },
+    "genie_space_id": { "type": "string", "minLength": 1 },
+    "genie_agent_id": { "type": "string" },
+    "genie_url": { "type": "string", "minLength": 1 },
+    "branding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_name", "plan_name", "segment"],
+      "properties": {
+        "product_name": { "type": "string", "minLength": 1 },
+        "plan_name": { "type": "string", "minLength": 1 },
+        "segment": { "type": "string", "minLength": 1 }
+      }
+    },
+    "benchmark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["high_peer_ratio", "medium_peer_ratio", "minimum_claims", "minimum_codes"],
+      "properties": {
+        "high_peer_ratio": { "type": "number", "exclusiveMinimum": 1 },
+        "medium_peer_ratio": { "type": "number", "minimum": 1 },
+        "minimum_claims": { "type": "integer", "minimum": 1 },
+        "minimum_codes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider_analysis", "letters", "embedded_genie", "member_utilization"],
+      "properties": {
+        "provider_analysis": { "type": "boolean" },
+        "letters": { "type": "boolean" },
+        "embedded_genie": { "type": "boolean" },
+        "member_utilization": { "type": "boolean" }
+      }
+    },
+    "tables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claims", "claim_lines", "members", "providers", "payments", "enrollments", "data_quality"],
+      "properties": {
+        "claims": { "$ref": "#/$defs/table" },
+        "claim_lines": { "$ref": "#/$defs/table" },
+        "members": { "$ref": "#/$defs/table" },
+        "providers": { "$ref": "#/$defs/table" },
+        "payments": { "$ref": "#/$defs/table" },
+        "enrollments": { "$ref": "#/$defs/table" },
+        "data_quality": { "$ref": "#/$defs/table" }
+      }
+    }
+  },
+  "$defs": {
+    "table": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$"
+    }
+  }
+}

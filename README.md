@@ -72,6 +72,7 @@ deploy.sh                          # deploy to fe-hls
 demos/hedis-quality/               # runnable Lakeflow ingestion demo (NOT deployed) — see its README
 skills/                            # Claude Code skills for this project (NOT deployed)
   app-skills/                      #   Databricks application build and deployment skills
+    x12-health-plan-analytics/     #   discover X12 data and deploy Health Plan Analytics
   genie-creation-skills/           #   Genie space creation + domain grounding skills
   lakeflow-connect-skills/         #   (placeholder for Lakeflow Connect ingestion skills)
 ```
@@ -84,6 +85,7 @@ three categories under the common `skills/` folder:
 skills/
   app-skills/                                 # Databricks application build and deployment skills
     deploy-monday-morning-scintilla/          # recreate and deploy the Monday Morning CPG app
+    x12-health-plan-analytics/                 # discover X12 data and deploy Health Plan Analytics
   genie-creation-skills/
     create-genie-space/               SKILL.md   # create a Genie space via API + wire it into the app
     health-cloud-benefits/            SKILL.md   # Health Cloud Benefits Verification: Lakeflow ingestion → metric views → Genie

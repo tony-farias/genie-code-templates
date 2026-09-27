@@ -1,0 +1,31 @@
+bundle:
+  name: x12pipeline-app-deploy
+
+include:
+  - resources/*.yml
+
+variables:
+  source_table:
+    description: Confirmed three-part raw X12 source table
+  payload_column:
+    default: edi_payload
+  primary_key_column:
+    default: record_id
+  target_catalog:
+    description: User-approved output catalog
+  target_schema:
+    description: User-approved output schema
+  table_prefix:
+    default: x12_demo_
+  node_type_id:
+    default: m5d.large
+
+workspace:
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+targets:
+  dev:
+    default: true
+    mode: development
+  prod:
+    mode: production

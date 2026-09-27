@@ -1,0 +1,35 @@
+{
+  "template_version": "1.0.1",
+  "catalog": "__CATALOG__",
+  "schema": "__SCHEMA__",
+  "warehouse_id": "__WAREHOUSE_ID__",
+  "genie_space_id": "__GENIE_SPACE_ID__",
+  "genie_agent_id": "__GENIE_AGENT_ID__",
+  "genie_url": "__GENIE_URL__",
+  "branding": {
+    "product_name": "FWA Shield",
+    "plan_name": "Health Plan Analytics",
+    "segment": "Governed X12 claims and payment analytics"
+  },
+  "benchmark": {
+    "high_peer_ratio": 1.5,
+    "medium_peer_ratio": 1.2,
+    "minimum_claims": 1,
+    "minimum_codes": 1
+  },
+  "features": {
+    "provider_analysis": true,
+    "letters": true,
+    "embedded_genie": true,
+    "member_utilization": true
+  },
+  "tables": {
+    "claims": "__CLAIMS_TABLE__",
+    "claim_lines": "__CLAIM_LINES_TABLE__",
+    "members": "__MEMBERS_TABLE__",
+    "providers": "__PROVIDERS_TABLE__",
+    "payments": "__PAYMENTS_TABLE__",
+    "enrollments": "__ENROLLMENTS_TABLE__",
+    "data_quality": "__DATA_QUALITY_TABLE__"
+  }
+}

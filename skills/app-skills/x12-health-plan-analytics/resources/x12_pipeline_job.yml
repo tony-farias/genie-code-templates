@@ -1,0 +1,35 @@
+resources:
+  jobs:
+    x12_parser_pipeline:
+      name: x12-parser-pipeline-${bundle.target}
+      description: Pinned X12 parser with PHI-safe quarantine and curated Gold outputs
+      max_concurrent_runs: 1
+      job_clusters:
+        - job_cluster_key: x12_classic
+          new_cluster:
+            spark_version: 16.4.x-scala2.12
+            node_type_id: ${var.node_type_id}
+            driver_node_type_id: ${var.node_type_id}
+            num_workers: 1
+            data_security_mode: SINGLE_USER
+            runtime_engine: STANDARD
+            spark_conf:
+              spark.sql.execution.arrow.pyspark.enabled: "true"
+            custom_tags:
+              project: x12pipeline-app-deploy-skill
+      tasks:
+        - task_key: parse_normalize_publish
+          job_cluster_key: x12_classic
+          timeout_seconds: 3600
+          notebook_task:
+            notebook_path: ../src/x12_pipeline.py
+            base_parameters:
+              source_table: ${var.source_table}
+              payload_column: ${var.payload_column}
+              primary_key_column: ${var.primary_key_column}
+              target_catalog: ${var.target_catalog}
+              target_schema: ${var.target_schema}
+              table_prefix: ${var.table_prefix}
+          libraries:
+            - pypi:
+                package: git+https://github.com/databricks-industry-solutions/x12-edi-parser.git@ac6d84d3f322310816a55a43569242afe295b4c5

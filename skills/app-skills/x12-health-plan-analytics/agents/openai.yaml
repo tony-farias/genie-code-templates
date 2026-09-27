@@ -1,0 +1,4 @@
+interface:
+  display_name: "X12 Health Plan Analytics"
+  short_description: "Deploy governed X12 analytics with App and Genie"
+  default_prompt: "Use $x12-health-plan-analytics to assess this customer's X12 source and deploy the Health Plan Analytics App and Genie Space."
