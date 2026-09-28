@@ -1,55 +1,88 @@
 # Customer deployment architecture
 
-## Runtime
+## Simplified core runtime
 
 ```text
-React/Vite SPA
-    -> Express REST API
-       -> Databricks Statement Execution API -> curated UC layer -> Scintilla feeds
-       -> Genie Conversation API             -> page-scoped Genie rooms
-       -> Foundation Model endpoint           -> briefs and recommendations
-       -> Vector Search (optional)             -> shopper/research notes
-       -> Lakebase (optional)                  -> chat, campaigns and action receipts
-       -> Multi-Agent Supervisor (optional)    -> routes across Genie rooms
+Viewer group -> Databricks App CAN USE
+                    |
+                    v
+              React/Vite SPA
+                    |
+                    v
+              Express REST API
+                    |
+                    +-> App service principal -> serverless SQL warehouse
+                    |                              -> curated UC schema
+                    +-> App service principal -> approved Genie Spaces
+                    +-> App service principal -> Foundation Model endpoint
 ```
 
-## Customer resources
+The App service principal is the shared runtime identity. The deployment identity builds curated objects and deploys App code but is not used by the running App. Viewers do not receive direct data or compute permissions unless the customer explicitly selects a delegated per-user authorization design.
 
-Create resources only after approval:
+## Existing resources
 
-1. A customer-owned curated schema beside, not inside, the licensed source schema.
-2. Serverless SQL warehouse or an approved existing warehouse.
-3. Databricks App with environment-specific resource IDs.
-4. Genie rooms for sales, demand, e-commerce/inventory, supply chain and measurement as supported by available feeds.
-5. Foundation Model endpoint available in the target region.
-6. Optional Lakebase database and Vector Search endpoint/index.
+The core deployment consumes, rather than provisions:
+
+1. A customer-owned curated schema outside the licensed source schema.
+2. A running serverless SQL warehouse.
+3. A Databricks App with its managed service principal.
+4. Approved Genie Spaces supported by the licensed feeds.
+5. A ready Foundation Model endpoint available in the target region.
+6. A viewer group with `CAN USE` on the App.
+
+Lakebase, Vector Search, a multi-agent supervisor, new catalogs, new warehouses, new model endpoints, and Spark compute are not part of the core footprint. Add one only after a separate opt-in plan, permission check, and approval.
+
+## App reuse
+
+Reusing an existing App means redeploying that same App. Its managed service principal remains attached to it. Do not attach that principal to a new App or reuse it across customers, workspaces, or security boundaries.
+
+Before reuse:
+
+- confirm the App belongs to the same customer and data boundary;
+- verify the deployment identity has `CAN MANAGE`;
+- require exact warehouse, model endpoint, and approved Genie bindings;
+- verify the service principal has access only to the curated data boundary needed here;
+- have an administrator revoke unrelated historical grants.
 
 ## App configuration
 
 Parameterize at minimum:
 
-- `WAREHOUSE_ID`, `CATALOG`, `SCHEMA`
-- shared and page-specific `GENIE_SPACE_*` values
-- `LLM_MODEL`
-- optional `SUPERVISOR_ENDPOINT`
-- optional `VECTOR_SEARCH_ENDPOINT`, `VECTOR_SEARCH_INDEX`
-- optional `LAKEBASE_HOST`, `LAKEBASE_DB`, `LAKEBASE_USER`
+- `WAREHOUSE_ID`, `CATALOG`, and `SCHEMA`;
+- shared and page-specific `GENIE_SPACE_*` IDs;
+- `LLM_MODEL`;
+- the App name and viewer group used by deployment automation.
 
-The app runtime receives Databricks OAuth credentials automatically. Mint short-lived tokens for SQL, Genie, Files, model serving and Lakebase. Do not embed a personal access token.
+Do not include Lakebase, Vector Search, or supervisor settings in the core configuration. Do not copy resource IDs from another workspace.
 
-### Critical: resolve WAREHOUSE_ID before deploying
+## Resource bindings
 
-Do not leave `WAREHOUSE_ID` as a placeholder. During deployment, list warehouses
-(`w.warehouses.list()`) and select a running serverless SQL warehouse. A placeholder
-value causes all SQL endpoints to return 500 (`InvalidParameterValue`).
+Configure resources through the Databricks Apps API:
 
-### Critical: Databricks SDK ChatMessage types
+- SQL warehouse: `CAN USE`;
+- Foundation Model endpoint: `CAN QUERY`;
+- each approved Genie Space: `CAN RUN`.
 
-The Foundation Model endpoint proxy (`/api/brief`) must use SDK-typed message objects,
-not plain Python dicts. The `serving_endpoints.query()` method serializes messages via
-`.as_dict()` — plain dicts raise `AttributeError: 'dict' object has no attribute 'as_dict'`.
+Do not rely on a `resources` section in `app.yaml`. Use the App's `application_id` UUID for Unity Catalog grants. The App receives `USE CATALOG`, `USE SCHEMA`, and `SELECT` only on the dedicated curated schema.
 
-Correct pattern:
+The default shared-identity design does not request delegated SQL or Genie scopes. If per-user auditing, row filters, or different data entitlements are required, switch explicitly to delegated identity and grant a viewer group the required warehouse, Genie, and curated-data privileges.
+
+## Curated data boundary
+
+Do not query licensed Scintilla feeds directly from the App. Build documented curated tables or governed views at stable grains, such as:
+
+- daily sales by item, location, and channel;
+- inventory by item, location, and day;
+- weekly plan and actuals;
+- supported forecast and e-commerce metrics;
+- executive weekly aggregates;
+- product, store, date, and category dimensions.
+
+Views avoid unnecessary copies of very large facts, but their owners must retain the required source privileges. Materialize only where measured performance requires it.
+
+## Foundation Model calls
+
+Use SDK-typed messages:
 
 ```python
 from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
@@ -64,57 +97,15 @@ response = w.serving_endpoints.query(
 )
 ```
 
-Never pass `{"role": "system", "content": ...}` — it will 500 at runtime.
-
-### Critical: grant app service principal access
-
-After creating the app, grant its service principal (`application_id` UUID from
-`apps get <name>`) the minimum required privileges before the first user visit:
-
-```sql
--- USE CATALOG is typically already granted to `account users` or inherited.
--- Only run this if the SP has no catalog-level access:
--- GRANT USE CATALOG ON CATALOG <catalog> TO `<application_id>`;
-
--- These two are always required:
-GRANT USE SCHEMA ON SCHEMA <catalog>.<curated_schema> TO `<application_id>`;
-GRANT SELECT ON SCHEMA <catalog>.<curated_schema> TO `<application_id>`;
-```
-
-`USE CATALOG` is often pre-granted at the workspace or account level. If it fails
-(permission denied or already exists), skip it — `USE SCHEMA` + `SELECT` are the
-two grants the app actually needs to execute queries. Without them, all SQL
-endpoints return 500 even if the warehouse ID is valid.
-
-### Critical: grant CAN_USE on the SQL warehouse
-
-The `sql_warehouse` resource binding in `app.yaml` does NOT auto-grant warehouse
-access. You must explicitly grant `CAN_USE` via the Permissions API:
-
-```python
-from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
-
-w.warehouses.update_permissions(
-    warehouse_id="<warehouse_id>",
-    access_control_list=[
-        AccessControlRequest(
-            service_principal_name="<application_id>",  # UUID, not display name
-            permission_level=PermissionLevel.CAN_USE,
-        )
-    ],
-)
-```
-
-Note: `service_principal_name` in the Permissions API requires the SP's
-`application_id` (UUID), not its display name. The display name (e.g.
-`app-5d6faj my-app`) will return `ResourceDoesNotExist`.
+Plain dictionaries are not accepted by SDK versions that serialize messages through `.as_dict()`.
 
 ## Validation gates
 
+- Permissions: both preflight stages return `ready: true`.
 - Inventory: every enabled capability has source tables and required join/metric columns.
-- Data: row counts, latest dates and supplier partitions are nonempty; join fanout is measured.
-- API: `/api/health` and every enabled dashboard endpoint return 2xx.
-- Genie: suggested prompts produce grounded SQL over allowed tables.
-- Security: the app service principal has only required catalog, warehouse, room, endpoint and database permissions.
-- UX: disabled capabilities are hidden or clearly labeled; no mock result is presented as live.
-- Operations: prebuild `dist/`, warm the warehouse asynchronously and configure bounded caches/timeouts.
+- Data: row counts, latest dates, supplier partitions, and join fanout are validated.
+- API: `/api/health` and every enabled route return 2xx.
+- Genie: approved prompts produce grounded SQL over curated objects only.
+- Model: briefs use the bound endpoint and approved evidence.
+- Security: runtime calls use the App service principal and only preflight-approved resources.
+- UX: unavailable capabilities are disabled; no mock result is presented as live.

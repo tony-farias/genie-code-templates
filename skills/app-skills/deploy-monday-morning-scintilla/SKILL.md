@@ -1,62 +1,108 @@
 ---
 name: deploy-monday-morning-scintilla
-description: Discover Walmart Scintilla Cloud Feeds in a customer Databricks workspace, assess readiness for the Monday Morning retail-intelligence application, create a deployment plan, and deploy the app with SQL, Genie, Foundation Models, and optional Lakebase persistence. Use when asked to recreate, migrate, provision, validate, or deploy the Monday Morning app against customer-licensed Scintilla data.
+description: Discover Walmart Scintilla Cloud Feeds, run a blocking permissions preflight, assess readiness, and deploy the Monday Morning retail-intelligence App against a pre-provisioned Databricks footprint. Use when asked to recreate, migrate, validate, or deploy Monday Morning against customer-licensed Scintilla data.
 ---
 
 # Deploy Monday Morning on Scintilla
 
-Recreate the Monday Morning retail-intelligence app without assuming that every customer licenses the same Cloud Feeds.
+Recreate Monday Morning without assuming that every customer licenses the same Cloud Feeds. Default to the simplified shared-data architecture; optional services require a separate decision and permission review.
+
+## Simplified footprint
+
+Require these existing resources before deployment:
+
+- one running serverless SQL warehouse;
+- one ready Foundation Model endpoint;
+- one customer-owned curated schema outside the licensed source schema;
+- one Databricks App with its Databricks-managed service principal;
+- approved Genie Spaces for the capabilities being deployed;
+- one viewer group with `CAN USE` on the App.
+
+Use SQL, Genie, and model serving through the App service principal. Viewers need only `CAN USE` on the App when every viewer is authorized for the same supplier-scoped curated data. Do not provision Lakebase, Vector Search, a supervisor endpoint, a new catalog, or Spark compute in the core deployment.
 
 ## Workflow
 
-1. Authenticate to the customer workspace with a named Databricks CLI profile.
-2. Identify the customer-provided catalog and Scintilla schema. Never guess or create them.
-3. Run the read-only inventory:
+1. Collect the named CLI profile, licensed source catalog/schema, pre-created curated catalog/schema, warehouse ID, model endpoint, App name, and viewer group.
+2. Ask whether the user wants to redeploy the existing App and retain that App's managed service principal. Reuse is allowed only for the same customer, workspace, and security boundary. Reuse the App itself; never detach its service principal or assign it to a different App. If the answer is no, have an administrator create and bootstrap a new empty App, then restart this workflow with its name.
+3. Read [references/permissions.md](references/permissions.md). Run the read-only inventory-stage preflight before inspecting feeds:
+
+   ```bash
+   python3 scripts/check_scintilla_permissions.py \
+     --profile <profile> \
+     --stage inventory \
+     --source-catalog <licensed-catalog> \
+     --source-schema <scintilla-schema> \
+     --curated-catalog <customer-catalog> \
+     --curated-schema <curated-schema> \
+     --warehouse-id <warehouse-id> \
+     --model-endpoint <endpoint-name> \
+     --app-name <existing-app-name> \
+     --viewer-group <group-name> \
+     --output /tmp/scintilla-permissions.json
+   ```
+
+4. Inspect every failed check and remediation. Stop unless `ready` is `true`. The preflight performs no Databricks writes, grants, deployment, model query, or Genie conversation.
+5. Run the read-only feed inventory:
 
    ```bash
    python3 scripts/inventory_scintilla.py \
      --profile <profile> \
-     --catalog <catalog> \
-     --schema <schema> \
+     --catalog <licensed-catalog> \
+     --schema <scintilla-schema> \
      --warehouse-id <warehouse-id> \
      --output /tmp/scintilla-readiness.md
    ```
 
-4. Read `references/cloud-feeds.md`. Compare present feeds with required and optional capabilities. Use column evidence, not table names alone, when a customer feed was renamed.
-5. Read `references/architecture.md`. Produce a customer-specific plan covering:
-   - source feeds and missing capabilities;
-   - curated tables/views and transformations;
-   - warehouse, app, Genie spaces, model endpoint and permissions;
-   - optional Lakebase, Vector Search and multi-agent supervisor;
-   - validation, cost controls and rollback.
-6. Present the plan and obtain approval before creating schemas, tables, apps, Genie spaces, endpoints, grants or databases.
-7. Deploy in phases:
-   - Core: sales, inventory, item/store dimensions and executive dashboard.
-   - Expansion: forecasting, e-commerce, OTIF, pricing and returns.
-   - AI: page-scoped Genie rooms, grounded questions and optional supervisor.
-   - Actions: Lakebase-backed chat/action persistence.
-8. Validate row counts, date coverage, join cardinality, dashboard API responses, Genie SQL grounding, permissions and app health.
+6. Read [references/cloud-feeds.md](references/cloud-feeds.md). Map supported capabilities using column and grain evidence, not names alone. Select only feeds used by enabled features.
+7. Read [references/architecture.md](references/architecture.md). Produce a customer-specific core plan covering curated views/tables, App configuration, Genie Spaces, validation, costs, and rollback. Have an administrator create or bind any missing Genie Spaces before the deployment gate.
+8. Rerun the preflight at the deployment stage with every confirmed source table and approved Genie Space. Stop unless `ready` is `true`:
+
+   ```bash
+   python3 scripts/check_scintilla_permissions.py \
+     --profile <profile> \
+     --stage deployment \
+     --source-catalog <licensed-catalog> \
+     --source-schema <scintilla-schema> \
+     --source-table <confirmed-table> \
+     --curated-catalog <customer-catalog> \
+     --curated-schema <curated-schema> \
+     --warehouse-id <warehouse-id> \
+     --model-endpoint <endpoint-name> \
+     --app-name <existing-app-name> \
+     --viewer-group <group-name> \
+     --genie-space-id <approved-space-id> \
+     --output /tmp/scintilla-deployment-permissions.json
+   ```
+
+   Repeat `--source-table` and `--genie-space-id` as needed.
+9. Present the final plan and obtain approval before creating or replacing curated objects or deploying App code.
+10. Deploy the core experience in phases: sales/inventory dashboard, supported expansion pages, then page-scoped Genie and grounded briefs. Features without licensed source evidence remain disabled.
+11. Treat Lakebase, Vector Search, and a supervisor as separate opt-in expansions. Re-run permission analysis and obtain approval before provisioning any of them.
+12. Validate row counts, dates, join fanout, every enabled API route, model responses, Genie grounding, App health, and the App service principal's runtime boundary.
+
+## Authorization rules
+
+- The deployment identity may read licensed feeds and create or update objects only in the dedicated curated schema. It does not need `MANAGE` on the source.
+- The App service principal receives `CAN USE` on the selected warehouse, `CAN QUERY` on the selected model endpoint, `CAN RUN` on only the approved Genie Spaces, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on only the curated schema.
+- Bind resources with the Databricks Apps API; do not rely on a `resources` block in `app.yaml`.
+- The default shared authorization mode does not request delegated SQL or Genie user scopes. Use delegated identity only when per-user audit, row filters, or differing data entitlements are explicit requirements; then create a separate group-based permission plan.
+- Reusing an App preserves its service principal and historical grants. The preflight rejects unexpected warehouse, model, or Genie bindings, but an administrator must also review and revoke stale grants elsewhere in Unity Catalog.
 
 ## Guardrails
 
+- Run and pass the applicable preflight before inventory or deployment. Never silently continue after a failed or unverifiable check.
 - Treat Scintilla data as customer-licensed and supplier-scoped. Do not copy it across customers or metastores.
-- Do not synthesize a missing licensed feed and present it as Scintilla. Mark the capability unavailable or propose a clearly labeled substitute.
-- Preserve source grain. Aggregate only in curated views/tables and document the grain.
-- Prefer service-principal OAuth and resource bindings. Never commit tokens, passwords or customer identifiers.
-- Parameterize catalog, schema, warehouse, Genie IDs, model endpoint and Lakebase settings.
-- Use least-privilege grants for the app service principal.
-- Make destructive replacement or cleanup a separate approved step.
-- **Resolve the warehouse ID** during deployment by listing warehouses (`w.warehouses.list()`) and selecting a running serverless SQL warehouse. Never leave a placeholder — it causes all SQL endpoints to 500.
-- **Use SDK-typed ChatMessage objects** when calling `serving_endpoints.query()`. Plain dicts raise `AttributeError: 'dict' object has no attribute 'as_dict'` at runtime. Import `ChatMessage` and `ChatMessageRole` from `databricks.sdk.service.serving`.
-- **Grant the app SP access before first visit.** Use the `application_id` UUID (from `apps get`) in backtick-quoted GRANT statements:
-  - `USE CATALOG` on the catalog — **required** (not optional). If the deploying user lacks MANAGE on the source catalog, create a new catalog you own, build views pointing to the source tables, and grant USE CATALOG there. Views avoid duplicating billion-row fact tables.
-  - `USE SCHEMA` and `SELECT` on the curated schema.
-  - If catalog creation via SQL fails with "use the UI to create a catalog with Default Storage", the user must create it in Catalog Explorer UI, then you proceed with schema/views/grants programmatically.
-- **Set `user_api_scopes` on the app.** Without explicit scopes, the app defaults to `iam.access-control:read` + `iam.current-user:read` only — which blocks SQL, Genie, and model-serving calls. After creating the app, call `w.apps.update(name=..., app=App(name=..., user_api_scopes=["sql", "genie"]))` to enable SQL warehouse and Genie access. This is the #1 cause of `PermissionDenied` on the warehouse.
-- **Bind resources via the Apps API, NOT `app.yaml`.** The `resources` section in `app.yaml` is silently ignored. Use `w.apps.update(name=..., app=App(name=..., resources=[AppResource(name="sql-warehouse", sql_warehouse=AppResourceSqlWarehouse(id="<warehouse_id>", permission=...CAN_USE)), AppResource(name="serving-endpoint", serving_endpoint=AppResourceServingEndpoint(name="<endpoint>", permission=...CAN_QUERY))]))`. Without this, the SP has zero resource access regardless of manual grants.
+- Never reuse an App or its service principal across customers, workspaces, or security boundaries.
+- Never create a new catalog as a fallback. A platform administrator must pre-create the curated namespace.
+- Do not synthesize a missing licensed feed and present it as Scintilla. Disable the capability or propose a clearly labeled substitute.
+- Preserve source grain. Aggregate only in documented curated views or tables.
+- Parameterize catalog, schema, warehouse, Genie IDs, model endpoint, App name, and viewer group.
+- Never commit credentials, customer identifiers, or workspace-specific resource IDs.
+- Make destructive replacement or cleanup a separately approved step.
+- Resolve every resource ID before deployment; placeholders are deployment blockers.
+- Use SDK-typed `ChatMessage` objects when calling `serving_endpoints.query()`.
+- Use the App's `application_id` UUID—not its display name—for Unity Catalog grants.
 
 ## Application source
 
-The original source is `https://github.com/akash-jaiswal_data/retaildemo`. The known deployed implementation is React/Vite with an Express API. Treat the source as a template: remove environment-specific IDs and regenerate customer resources rather than copying IDs from another workspace.
-
-Use the migration bundle in the source repository when available. If the upstream repository is inaccessible, reconstruct the components described in `references/architecture.md` and preserve the same API contracts.
+The original source is `https://github.com/akash-jaiswal_data/retaildemo`. The known implementation is React/Vite with an Express API. Treat it as a template: remove environment-specific IDs and configure only the preflight-approved resources. If the source is unavailable, preserve the API contracts in [references/architecture.md](references/architecture.md); do not invent unsupported data or functionality.
