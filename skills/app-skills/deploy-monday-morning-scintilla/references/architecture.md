@@ -46,12 +46,13 @@ Before reuse:
 
 ## App configuration
 
-Parameterize at minimum:
+The golden template's `app.yaml` carries placeholders that `scripts/render_app.py` fills; no other file changes. See [app-contract.md](app-contract.md).
 
 - `WAREHOUSE_ID`, `CATALOG`, and `SCHEMA`;
-- shared and page-specific `GENIE_SPACE_*` IDs;
+- `GENIE_SPACE_ID`;
 - `LLM_MODEL`;
-- the App name and viewer group used by deployment automation.
+- optional `OUTCOME_MAPS_URL`;
+- the App name and viewer group used by deployment automation, outside `app.yaml`.
 
 Do not include Lakebase, Vector Search, or supervisor settings in the core configuration. Do not copy resource IDs from another workspace.
 
@@ -102,10 +103,11 @@ Plain dictionaries are not accepted by SDK versions that serialize messages thro
 ## Validation gates
 
 - Permissions: both preflight stages return `ready: true`.
-- Inventory: every enabled capability has source tables and required join/metric columns.
+- Template: `verify_app_template.py` passes, including the reproducible UI build when npm is available.
+- Inventory: every `REQUIRED_TABLES` entry exists with the required join/metric columns.
 - Data: row counts, latest dates, supplier partitions, and join fanout are validated.
-- API: `/api/health` and every enabled route return 2xx.
+- UI parity and API: `verify_deployment.py` returns `ready: true`, so the served shell and every asset match the lock and every parameterless UI GET route returns JSON 2xx.
 - Genie: approved prompts produce grounded SQL over curated objects only.
 - Model: briefs use the bound endpoint and approved evidence.
 - Security: runtime calls use the App service principal and only preflight-approved resources.
-- UX: unavailable capabilities are disabled; no mock result is presented as live.
+- UX: no mock result is presented as live.

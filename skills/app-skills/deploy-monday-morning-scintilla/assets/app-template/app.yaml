@@ -1,0 +1,26 @@
+# Golden App runtime. scripts/render_app.py replaces each __PLACEHOLDER__ value;
+# every other file in this template ships byte-for-byte.
+#
+# The UI is the committed dist/ build. package.json intentionally has no
+# "build" script, so Databricks Apps never rebuilds it during deployment, and
+# the App refuses to start without the compiled UI.
+command:
+  - "bash"
+  - "-c"
+  - "if [ ! -f dist/index.html ]; then echo 'Golden UI build dist/index.html is missing' >&2; exit 1; fi; npm install --omit=dev --no-audit --no-fund && node server.js"
+
+env:
+  - name: WAREHOUSE_ID
+    value: "__WAREHOUSE_ID__"
+  - name: CATALOG
+    value: "__CATALOG__"
+  - name: SCHEMA
+    value: "__SCHEMA__"
+  # Genie space powering the live "Ask Genie" chat (real Conversation API).
+  - name: GENIE_SPACE_ID
+    value: "__GENIE_SPACE_ID__"
+  - name: LLM_MODEL
+    value: "__LLM_MODEL__"
+  # Optional sidebar link back to the Outcome Maps deck; empty hides it.
+  - name: OUTCOME_MAPS_URL
+    value: "__OUTCOME_MAPS_URL__"

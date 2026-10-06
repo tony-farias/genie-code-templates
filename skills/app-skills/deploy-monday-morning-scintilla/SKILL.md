@@ -1,11 +1,13 @@
 ---
 name: deploy-monday-morning-scintilla
-description: Discover Walmart Scintilla Cloud Feeds, run a blocking permissions preflight, assess readiness, and deploy the Monday Morning retail-intelligence App against a pre-provisioned Databricks footprint. Use when asked to recreate, migrate, validate, or deploy Monday Morning against customer-licensed Scintilla data.
+description: Discover Walmart Scintilla Cloud Feeds, run a blocking permissions preflight, assess readiness, and deploy the golden Monday Morning retail-intelligence App byte-for-byte against a pre-provisioned Databricks footprint. Use when asked to recreate, migrate, validate, or deploy Monday Morning against customer-licensed Scintilla data.
 ---
 
 # Deploy Monday Morning on Scintilla
 
 Recreate Monday Morning without assuming that every customer licenses the same Cloud Feeds. Default to the simplified shared-data architecture; optional services require a separate decision and permission review.
+
+Every deployment ships the same UI. The App is the locked golden template in `assets/app-template`; a run may change only the `app.yaml` env values through `scripts/render_app.py`. Read [references/app-contract.md](references/app-contract.md) before deploying.
 
 ## Simplified footprint
 
@@ -53,7 +55,7 @@ Use SQL, Genie, and model serving through the App service principal. Viewers nee
      --output /tmp/scintilla-readiness.md
    ```
 
-6. Read [references/cloud-feeds.md](references/cloud-feeds.md). Map supported capabilities using column and grain evidence, not names alone. Select only feeds used by enabled features.
+6. Read [references/cloud-feeds.md](references/cloud-feeds.md). Map feeds using column and grain evidence, not names alone. Every table in `REQUIRED_TABLES` (`scripts/app_contract.py`) must be available. If any is missing, stop and report it: the golden UI has no feature flags, so never hide, stub, or regenerate a page to work around a missing feed.
 7. Read [references/architecture.md](references/architecture.md). Produce a customer-specific core plan covering curated views/tables, App configuration, Genie Spaces, validation, costs, and rollback. Have an administrator create or bind any missing Genie Spaces before the deployment gate.
 8. Rerun the preflight at the deployment stage with every confirmed source table and approved Genie Space. Stop unless `ready` is `true`:
 
@@ -74,11 +76,34 @@ Use SQL, Genie, and model serving through the App service principal. Viewers nee
      --output /tmp/scintilla-deployment-permissions.json
    ```
 
-   Repeat `--source-table` and `--genie-space-id` as needed.
+   Pass every `REQUIRED_TABLES` entry as `--source-table`; repeat `--genie-space-id` as needed.
 9. Present the final plan and obtain approval before creating or replacing curated objects or deploying App code.
-10. Deploy the core experience in phases: sales/inventory dashboard, supported expansion pages, then page-scoped Genie and grounded briefs. Features without licensed source evidence remain disabled.
-11. Treat Lakebase, Vector Search, and a supervisor as separate opt-in expansions. Re-run permission analysis and obtain approval before provisioning any of them.
-12. Validate row counts, dates, join fanout, every enabled API route, model responses, Genie grounding, App health, and the App service principal's runtime boundary.
+10. Verify the golden template, render it with resolved IDs only, and deploy the rendered tree unchanged. Render outside any Git worktree, and sync to a new, empty workspace folder:
+
+    ```bash
+    python3 scripts/verify_app_template.py   # add --skip-build when npm is unavailable
+    python3 scripts/render_app.py \
+      --warehouse-id <warehouse-id> \
+      --catalog <customer-catalog> \
+      --schema <curated-schema> \
+      --genie-space-id <approved-space-id> \
+      --model-endpoint <endpoint-name> \
+      --output /tmp/monday-morning-app
+    databricks sync /tmp/monday-morning-app <workspace-source-path> --full --profile <profile>
+    databricks apps deploy <app-name> --source-code-path <workspace-source-path> --mode SNAPSHOT --profile <profile>
+    ```
+
+11. Prove the running App serves the golden UI byte-for-byte and every parameterless UI API route returns JSON. Stop unless `ready` is `true`:
+
+    ```bash
+    python3 scripts/verify_deployment.py \
+      --profile <profile> \
+      --app-name <app-name> \
+      --output /tmp/monday-morning-ui-parity.json
+    ```
+
+12. Treat Lakebase, Vector Search, and a supervisor as separate opt-in expansions. Re-run permission analysis and obtain approval before provisioning any of them.
+13. Validate row counts, dates, join fanout, model responses, Genie grounding, and the App service principal's runtime boundary.
 
 ## Authorization rules
 
@@ -94,7 +119,9 @@ Use SQL, Genie, and model serving through the App service principal. Viewers nee
 - Treat Scintilla data as customer-licensed and supplier-scoped. Do not copy it across customers or metastores.
 - Never reuse an App or its service principal across customers, workspaces, or security boundaries.
 - Never create a new catalog as a fallback. A platform administrator must pre-create the curated namespace.
-- Do not synthesize a missing licensed feed and present it as Scintilla. Disable the capability or propose a clearly labeled substitute.
+- Do not synthesize a missing licensed feed and present it as Scintilla. Stop and report the gap.
+- Never edit, restyle, regenerate, or rebuild the App during a deployment. Deploy only `render_app.py` output, and never run `verify_app_template.py --update-lock` as part of a deployment.
+- Treat a failed template, render, or UI-parity check as a deployment failure, not an invitation to fix the UI.
 - Preserve source grain. Aggregate only in documented curated views or tables.
 - Parameterize catalog, schema, warehouse, Genie IDs, model endpoint, App name, and viewer group.
 - Never commit credentials, customer identifiers, or workspace-specific resource IDs.
@@ -105,4 +132,4 @@ Use SQL, Genie, and model serving through the App service principal. Viewers nee
 
 ## Application source
 
-The original source is `https://github.com/akash-jaiswal_data/retaildemo`. The known implementation is React/Vite with an Express API. Treat it as a template: remove environment-specific IDs and configure only the preflight-approved resources. If the source is unavailable, preserve the API contracts in [references/architecture.md](references/architecture.md); do not invent unsupported data or functionality.
+`assets/app-template` is the only approved source: a React/Vite SPA with an Express API, its committed `dist/` build, and `template-lock.json`. It derives from `https://github.com/akash-jaiswal_data/retaildemo`, but deployments never fetch or adapt that repository. Template changes follow the change control in [references/app-contract.md](references/app-contract.md).
