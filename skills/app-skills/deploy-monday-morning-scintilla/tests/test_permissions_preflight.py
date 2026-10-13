@@ -14,8 +14,14 @@ SPEC.loader.exec_module(MODULE)
 
 
 class FakeCli:
-    def __init__(self, *, stale_warehouse=False):
+    def __init__(self, *, stale_warehouse=False, deny_app_metadata=False, user_sql_auth=False,
+                 user_api_scopes=None):
         self.stale_warehouse = stale_warehouse
+        self.deny_app_metadata = deny_app_metadata
+        self.user_api_scopes = (
+            user_api_scopes if user_api_scopes is not None else
+            (["sql:restricted-query"] if user_sql_auth else [])
+        )
 
     def json(self, arguments):
         prefix = tuple(arguments[:2])
@@ -36,6 +42,8 @@ class FakeCli:
             securable_type = arguments[2]
             principal = arguments[-1]
             if principal == "app-uuid":
+                if self.deny_app_metadata:
+                    raise MODULE.CliError("User does not have READ METADATA")
                 values = ["USE_CATALOG"] if securable_type == "CATALOG" else ["USE_SCHEMA", "SELECT"]
             elif securable_type == "CATALOG":
                 values = ["USE_CATALOG"]
@@ -55,6 +63,7 @@ class FakeCli:
             return {
                 "name": "monday-morning",
                 "service_principal_client_id": "app-uuid",
+                "user_api_scopes": self.user_api_scopes,
                 "resources": [
                     *warehouse_resources,
                     {"serving_endpoint": {"name": "model-1", "permission": "CAN_QUERY"}},
@@ -64,6 +73,12 @@ class FakeCli:
             return self._acl([
                 ("user_name", "analyst@example.com", "CAN_MANAGE"),
                 ("group_name", "scintilla-viewers", "CAN_USE"),
+            ])
+        if prefix == ("genie", "get-space"):
+            return {"space_id": arguments[2], "title": "Sales"}
+        if prefix == ("api", "get") and arguments[2].startswith("/api/2.0/permissions/genie/"):
+            return self._acl([
+                ("service_principal_name", "app-uuid", "CAN_RUN"),
             ])
         raise AssertionError(f"Unexpected command: {arguments}")
 
@@ -193,6 +208,34 @@ class PermissionsPreflightTests(unittest.TestCase):
         failures = {item["name"] for item in report["checks"] if item["status"] == MODULE.FAIL}
         self.assertIn("app.warehouse_binding", failures)
 
+    def test_app_grants_can_be_runtime_validated_without_uc_manage(self):
+        report = MODULE.build_report(
+            inventory_args(), FakeCli(deny_app_metadata=True)
+        )
+        self.assertTrue(report["ready"])
+        warnings = {item["name"] for item in report["checks"] if item["status"] == MODULE.WARN}
+        self.assertIn("app_service_principal.catalog_permissions", warnings)
+        self.assertIn("app_service_principal.schema_permissions", warnings)
+
+    def test_delegated_user_sql_does_not_require_app_principal_uc_grants(self):
+        report = MODULE.build_report(
+            inventory_args(), FakeCli(deny_app_metadata=True, user_sql_auth=True)
+        )
+        self.assertTrue(report["ready"])
+        self.assertEqual(report["authorization_mode"], "delegated_user_sql")
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["user_authorization.uc_boundary"]["status"], MODULE.PASS)
+        self.assertNotIn("app_service_principal.schema_permissions", checks)
+
+    def test_broad_or_unused_delegated_scopes_block_preflight(self):
+        for scopes in (["sql"], ["sql:restricted-query", "sql:statement-execution"],
+                       ["genie"]):
+            with self.subTest(scopes=scopes):
+                report = MODULE.build_report(inventory_args(), FakeCli(user_api_scopes=scopes))
+                self.assertFalse(report["ready"])
+                checks = {item["name"]: item for item in report["checks"]}
+                self.assertEqual(checks["app.authorization_mode"]["status"], MODULE.FAIL)
+
     def test_deployment_stage_requires_sources_and_genie_spaces(self):
         args = inventory_args()
         args.stage = "deployment"
@@ -202,6 +245,19 @@ class PermissionsPreflightTests(unittest.TestCase):
         self.assertEqual(
             failures & {"deployment.selected_sources", "deployment.genie_spaces"},
             {"deployment.selected_sources", "deployment.genie_spaces"},
+        )
+
+    def test_deployment_stage_accepts_direct_genie_acl(self):
+        args = inventory_args()
+        args.stage = "deployment"
+        args.source_table = ["store_sales"]
+        args.genie_space_id = ["space-1"]
+        report = MODULE.build_report(args, FakeCli())
+        self.assertTrue(report["ready"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(
+            checks["genie_space.space-1.app_can_run"]["status"],
+            MODULE.PASS,
         )
 
 

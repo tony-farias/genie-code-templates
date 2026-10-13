@@ -20,12 +20,17 @@ Require these existing resources before deployment:
 - approved Genie Spaces for the capabilities being deployed;
 - one viewer group with `CAN USE` on the App.
 
-Use SQL, Genie, and model serving through the App service principal. Viewers need only `CAN USE` on the App when every viewer is authorized for the same supplier-scoped curated data. Do not provision Lakebase, Vector Search, a supervisor endpoint, a new catalog, or Spark compute in the core deployment.
+Use the App service principal for Genie and model serving. Choose one SQL authorization mode explicitly:
+
+- **Shared App authorization:** the App service principal queries the curated schema; viewers need only `CAN USE` on the App.
+- **Read-only user authorization:** request only `sql:restricted-query` and query with `x-forwarded-access-token`; each viewer keeps their existing warehouse and Unity Catalog entitlements, row filters, and masks.
+
+Never combine user-authorized SQL with a cross-user result cache. Do not provision Lakebase, Vector Search, a supervisor endpoint, a new catalog, or Spark compute in the core deployment.
 
 ## Workflow
 
 1. Collect the named CLI profile, licensed source catalog/schema, pre-created curated catalog/schema, warehouse ID, model endpoint, App name, and viewer group.
-2. Ask whether the user wants to redeploy the existing App and retain that App's managed service principal. Reuse is allowed only for the same customer, workspace, and security boundary. Reuse the App itself; never detach its service principal or assign it to a different App. If the answer is no, have an administrator create and bootstrap a new empty App, then restart this workflow with its name.
+2. Ask whether the user wants to redeploy the existing App and retain that App's managed service principal. Reuse is allowed only for the same customer, workspace, and security boundary. Reuse the App itself; never detach its service principal or assign it to a different App. If the answer is no, have an administrator create a new empty App. Also select shared App authorization or read-only user authorization using the criteria above.
 3. Read [references/permissions.md](references/permissions.md). Run the read-only inventory-stage preflight before inspecting feeds:
 
    ```bash
@@ -108,9 +113,10 @@ Use SQL, Genie, and model serving through the App service principal. Viewers nee
 ## Authorization rules
 
 - The deployment identity may read licensed feeds and create or update objects only in the dedicated curated schema. It does not need `MANAGE` on the source.
-- The App service principal receives `CAN USE` on the selected warehouse, `CAN QUERY` on the selected model endpoint, `CAN RUN` on only the approved Genie Spaces, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on only the curated schema.
+- In shared mode, the App service principal receives `CAN USE` on the selected warehouse, `CAN QUERY` on the selected model endpoint, `CAN RUN` on only the approved Genie Spaces, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on only the curated schema.
+- In read-only user mode, request only `sql:restricted-query`; every viewer needs `CAN USE` on the warehouse and the required curated Unity Catalog privileges. The App service principal does not need UC data grants for user-authorized SQL.
 - Bind resources with the Databricks Apps API; do not rely on a `resources` block in `app.yaml`.
-- The default shared authorization mode does not request delegated SQL or Genie user scopes. Use delegated identity only when per-user audit, row filters, or differing data entitlements are explicit requirements; then create a separate group-based permission plan.
+- The default shared authorization mode does not request delegated SQL or Genie user scopes. Use read-only user authorization when per-user audit, row filters, differing entitlements, or unavailable App-principal catalog grants require it. Never request broader `sql` scope when `sql:restricted-query` is sufficient.
 - Reusing an App preserves its service principal and historical grants. The preflight rejects unexpected warehouse, model, or Genie bindings, but an administrator must also review and revoke stale grants elsewhere in Unity Catalog.
 
 ## Guardrails

@@ -2,6 +2,8 @@
 
 ## Simplified core runtime
 
+Shared App authorization:
+
 ```text
 Viewer group -> Databricks App CAN USE
                     |
@@ -18,6 +20,16 @@ Viewer group -> Databricks App CAN USE
 ```
 
 The App service principal is the shared runtime identity. The deployment identity builds curated objects and deploys App code but is not used by the running App. Viewers do not receive direct data or compute permissions unless the customer explicitly selects a delegated per-user authorization design.
+
+Read-only user authorization changes only the SQL branch:
+
+```text
+Viewer -> Databricks App -> x-forwarded-access-token -> SQL warehouse -> curated UC schema
+                       +-> App service principal -> approved Genie Spaces
+                       +-> App service principal -> Foundation Model endpoint
+```
+
+Request only `sql:restricted-query`. Unity Catalog applies each viewer's grants, row filters, and masks. Disable shared SQL-result caching for user-authorized requests.
 
 ## Existing resources
 
@@ -66,7 +78,7 @@ Configure resources through the Databricks Apps API:
 
 Do not rely on a `resources` section in `app.yaml`. Use the App's `application_id` UUID for Unity Catalog grants. The App receives `USE CATALOG`, `USE SCHEMA`, and `SELECT` only on the dedicated curated schema.
 
-The default shared-identity design does not request delegated SQL or Genie scopes. If per-user auditing, row filters, or different data entitlements are required, switch explicitly to delegated identity and grant a viewer group the required warehouse, Genie, and curated-data privileges.
+The default shared-identity design does not request delegated SQL or Genie scopes. If per-user auditing, row filters, masks, different data entitlements, or unavailable App-principal catalog grants require user authorization, request only `sql:restricted-query` and grant approved viewer groups the required warehouse and curated-data privileges. Genie remains App-authorized unless the design explicitly requires per-user Genie access.
 
 ## Curated data boundary
 
@@ -109,5 +121,5 @@ Plain dictionaries are not accepted by SDK versions that serialize messages thro
 - UI parity and API: `verify_deployment.py` returns `ready: true`, so the served shell and every asset match the lock and every parameterless UI GET route returns JSON 2xx.
 - Genie: approved prompts produce grounded SQL over curated objects only.
 - Model: briefs use the bound endpoint and approved evidence.
-- Security: runtime calls use the App service principal and only preflight-approved resources.
+- Security: runtime calls use the selected identity mode and only preflight-approved resources; user-authorized SQL is tested with a real signed-in viewer and never served from a cross-user cache.
 - UX: no mock result is presented as live.

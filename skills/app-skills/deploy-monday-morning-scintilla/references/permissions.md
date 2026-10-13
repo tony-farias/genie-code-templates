@@ -6,9 +6,9 @@ Use three identities:
 
 1. A platform administrator performs one-time bootstrap.
 2. A deployment identity inventories Scintilla, maintains curated objects, and redeploys the existing App.
-3. The Databricks-managed App service principal runs shared SQL, Genie, and model calls.
+3. The Databricks-managed App service principal runs Genie and model calls, and SQL in shared mode. In read-only user mode, the signed-in viewer runs SQL.
 
-Viewers receive App access through one group. They do not need direct SQL warehouse, Unity Catalog, Genie, or model endpoint permissions in the default shared authorization mode.
+Viewers receive App access through one group. They do not need direct data or compute permissions in shared mode. In read-only user mode, viewers must have warehouse and curated Unity Catalog access through approved groups.
 
 ## One-time administrator bootstrap
 
@@ -54,6 +54,19 @@ The administrator can then leave the recurring deployment path. The deployment i
 
 Do not grant the App service principal access to the licensed source schema. Use curated tables or governed views whose ownership and dependencies have been configured for that boundary.
 
+## Read-only user authorization
+
+Use this mode when per-user audit, row filters, masks, differing entitlements, or an unavailable App-principal catalog grant makes shared authorization unsuitable.
+
+| Resource | Viewer permission |
+|---|---|
+| App | `CAN USE` |
+| Selected SQL warehouse | `CAN USE` |
+| Curated catalog | `USE CATALOG` |
+| Dedicated curated schema | `USE SCHEMA`, `SELECT` |
+
+Configure only `sql:restricted-query`. The backend must use the request's `x-forwarded-access-token` for Statement Execution. Never cache user-authorized query results across viewers. Genie and model calls may continue using their narrowly bound App identity.
+
 ## Existing App reuse
 
 An App service principal is lifecycle-managed by its App. It is not a portable credential or a general deployment service principal.
@@ -76,7 +89,7 @@ The inventory-stage check verifies:
 - ready model endpoint;
 - existing App, managed service principal, caller `CAN MANAGE`, and viewer-group `CAN USE`;
 - exact warehouse and model resource bindings;
-- App service-principal access to the curated namespace.
+- the selected SQL authorization mode; shared mode checks App-principal UC access, while read-only user mode verifies the caller and warns that every viewer needs equivalent approved entitlements.
 
 The deployment-stage check additionally verifies:
 
