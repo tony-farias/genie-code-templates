@@ -69,7 +69,6 @@ app.py app.yaml requirements.txt   # Databricks App runtime (deployed)
 static/index.html static/data.js   # UI + generated data (deployed)
 generate_*.py  netsuite_gtn.js     # build-time model generators (NOT deployed) — see BUILD.md
 deploy.sh                          # deploy to fe-hls
-demos/hedis-quality/               # runnable Lakeflow ingestion demo (NOT deployed) — see its README
 skills/                            # Claude Code skills for this project (NOT deployed)
   app-skills/                      #   Databricks application build and deployment skills
     x12-health-plan-analytics/     #   discover X12 data and deploy Health Plan Analytics

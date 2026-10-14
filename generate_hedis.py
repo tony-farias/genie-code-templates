@@ -1,6 +1,6 @@
 """Build the HEDIS Quality Measures data model as `const HEDIS = {...}` for the ERD app.
 
-This documents the star schema produced by demos/hedis-quality/hedis_pipeline.py, with
+This documents the HEDIS star schema (HEDIS files + Salesforce Data Cloud dims), with
 each entity colored by PROVENANCE via its `kind` (see the STYLE map in index.html):
 
   file      → ingested from HEDIS files with Auto Loader (green)

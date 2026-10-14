@@ -11,7 +11,7 @@ produced by a generator script; all consts are concatenated into `static/data.js
 | Clinical · CTMS | `CTMSVEEVA` | `generate_clinical.py` | UC `ravivijay_catalog.clinical-ctms-veeva` |
 | Health Cloud · Benefits Verification | `PATIENTSERVICES` | `generate_patient_services.py` | curated Salesforce Health Cloud model (mock) |
 | Finance · Gross-to-Net | `NETSUITE_GTN` | `generate_netsuite.py` | curated Oracle NetSuite GTN model (mock) |
-| Quality · HEDIS Measures | `HEDIS` | `generate_hedis.py` | HEDIS star schema; runnable pipeline in `demos/hedis-quality/` |
+| Quality · HEDIS Measures | `HEDIS` | `generate_hedis.py` | curated HEDIS star schema (mock) |
 
 The Veeva/Safety/Quality/Clinical generators read a UC tables-API JSON dump (see each
 file's `SRC` path) and infer FK edges from naming conventions. The Salesforce and
