@@ -68,7 +68,7 @@ export async function dataToken() {
   if (!userToken) {
     throw new Error(
       'User authorization is not configured: the request has no x-forwarded-access-token. ' +
-      'Add the sql:restricted-query and genie user scopes to the App, or set AUTHORIZATION_MODE to "app".'
+      'Add the sql and genie user scopes to the App, or set AUTHORIZATION_MODE to "app".'
     );
   }
   return userToken;

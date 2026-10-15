@@ -19,7 +19,7 @@ The administrator must:
 - create the App or approve reuse of an existing App in the same security boundary;
 - bind that warehouse with `CAN USE` and the endpoint with `CAN QUERY`;
 - create or select the supported Genie Spaces;
-- in user mode, set the App's user authorization scopes to `sql:restricted-query` and `genie`, and grant the viewer group the permissions in [User authorization](#user-authorization-default);
+- in user mode, set the App's user authorization scopes to `sql` and `genie`, and grant the viewer group the permissions in [User authorization](#user-authorization-default);
 - in App mode, grant the App `application_id` UUID `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the curated schema, and bind each Genie Space with `CAN RUN`;
 - grant the deployment identity `CAN MANAGE` on the App;
 - grant the viewer group `CAN USE` on the App;
@@ -45,7 +45,7 @@ The administrator can then leave the recurring deployment path. The deployment i
 
 ## User authorization (default)
 
-SQL and Genie run with each viewer's forwarded `x-forwarded-access-token`, so Unity Catalog applies the viewer's own grants, row filters, and masks, and audit logs record the viewer. Set the App's user authorization scopes to exactly `sql:restricted-query` and `genie` (the platform adds its default `iam` read scopes). Viewers consent to these scopes the first time they open the App.
+SQL and Genie run with each viewer's forwarded `x-forwarded-access-token`, so Unity Catalog applies the viewer's own grants, row filters, and masks, and audit logs record the viewer. Set the App's user authorization scopes to exactly `sql` and `genie` (the platform adds its default `iam` read scopes). Do not use `sql:restricted-query`: its tokens can submit a statement but cannot fetch the result, so any query that runs past the Statement Execution API's 50-second wait fails with a 403. The App sends only `SELECT` statements, and Unity Catalog still limits every query to the viewer's own privileges. Viewers consent to these scopes the first time they open the App. Scope changes on an existing App may not reach viewers who already consented; test a changed scope set on a new App.
 
 | Resource | Viewer group permission |
 |---|---|

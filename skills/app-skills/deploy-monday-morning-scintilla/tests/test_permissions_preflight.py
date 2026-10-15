@@ -20,7 +20,7 @@ class FakeCli:
         self.deny_app_metadata = deny_app_metadata
         self.user_api_scopes = (
             user_api_scopes if user_api_scopes is not None else
-            (["sql:restricted-query", "genie", "iam.current-user:read"] if user_auth else [])
+            (["sql", "genie", "iam.current-user:read"] if user_auth else [])
         )
         self.viewer_grants = viewer_grants
         self.viewer_warehouse = viewer_warehouse
@@ -266,12 +266,12 @@ class PermissionsPreflightTests(unittest.TestCase):
     def test_scopes_must_match_authorization_mode(self):
         for mode, scopes in (
             ("user", []),
-            ("user", ["sql:restricted-query"]),
+            ("user", ["sql"]),
             ("user", ["genie"]),
-            ("user", ["sql", "genie"]),
-            ("user", ["sql:restricted-query", "sql:statement-execution", "genie"]),
-            ("user", ["sql:restricted-query", "genie", "files"]),
-            ("app", ["sql:restricted-query", "genie"]),
+            ("user", ["sql:restricted-query", "genie"]),
+            ("user", ["sql", "sql:restricted-query", "genie"]),
+            ("user", ["sql", "genie", "files"]),
+            ("app", ["sql", "genie"]),
             ("app", ["genie"]),
         ):
             with self.subTest(mode=mode, scopes=scopes):
@@ -284,7 +284,7 @@ class PermissionsPreflightTests(unittest.TestCase):
 
     def test_deprecated_genie_scope_name_warns(self):
         report = MODULE.build_report(
-            inventory_args(), FakeCli(user_api_scopes=["sql:restricted-query", "dashboards.genie"])
+            inventory_args(), FakeCli(user_api_scopes=["sql", "dashboards.genie"])
         )
         self.assertTrue(report["ready"])
         checks = {item["name"]: item for item in report["checks"]}

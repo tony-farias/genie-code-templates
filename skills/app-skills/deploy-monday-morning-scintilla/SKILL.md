@@ -22,7 +22,7 @@ Require these existing resources before deployment:
 
 Model serving always uses the App service principal. SQL and Genie run under one authorization mode, rendered as `AUTHORIZATION_MODE`:
 
-- **User authorization (default):** the App requests the `sql:restricted-query` and `genie` user scopes, and SQL and Genie run with each viewer's forwarded `x-forwarded-access-token`. Viewers keep their existing warehouse access, Unity Catalog grants, row filters, and masks. The App service principal needs no Unity Catalog data grants and no Genie access.
+- **User authorization (default):** the App requests the `sql` and `genie` user scopes, and SQL and Genie run with each viewer's forwarded `x-forwarded-access-token`. Viewers keep their existing warehouse access, Unity Catalog grants, row filters, and masks. The App service principal needs no Unity Catalog data grants and no Genie access.
 - **App authorization:** the App service principal queries the curated schema and runs Genie; viewers need only `CAN USE` on the App. Choose it only when the viewers cannot be granted the curated data.
 
 In user mode a request without a forwarded token fails; it never falls back to the App identity. Never combine user-authorized SQL with a cross-user result cache. Do not provision Lakebase, Vector Search, a supervisor endpoint, a new catalog, or Spark compute in the core deployment.
@@ -116,11 +116,11 @@ In user mode a request without a forwarded token fails; it never falls back to t
 ## Authorization rules
 
 - The deployment identity may read licensed feeds and create or update objects only in the dedicated curated schema. It does not need `MANAGE` on the source.
-- In user mode (the default), the App's user authorization scopes are exactly `sql:restricted-query` and `genie`. The viewer group needs `CAN USE` on the warehouse, `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the curated schema, and `CAN RUN` on the approved Genie Spaces. The App service principal keeps only `CAN USE` on the warehouse (boot-time warm-up) and `CAN QUERY` on the model endpoint.
+- In user mode (the default), the App's user authorization scopes are exactly `sql` and `genie`. The viewer group needs `CAN USE` on the warehouse, `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the curated schema, and `CAN RUN` on the approved Genie Spaces. The App service principal keeps only `CAN USE` on the warehouse (boot-time warm-up) and `CAN QUERY` on the model endpoint.
 - In App mode, the App requests no SQL or Genie user scopes. The App service principal receives `CAN USE` on the selected warehouse, `CAN QUERY` on the selected model endpoint, `CAN RUN` on only the approved Genie Spaces, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on only the curated schema.
 - Render and preflight with the same `--authorization-mode`; the preflight fails when the App's scopes do not match it.
 - Bind resources with the Databricks Apps API; do not rely on a `resources` block in `app.yaml`.
-- Never request the broader `sql` scope; `sql:restricted-query` is sufficient. Use `genie`, not the deprecated `dashboards.genie`.
+- Request `sql`, not `sql:restricted-query`. `sql:restricted-query` is not enough: its tokens can submit a statement but cannot fetch the result, so any query that runs past the Statement Execution API's 50-second wait fails with a 403. The App sends only `SELECT` statements, and Unity Catalog still limits every query to the viewer's own privileges. Use `genie`, not the deprecated `dashboards.genie`.
 - Reusing an App preserves its service principal and historical grants. The preflight rejects unexpected warehouse, model, or Genie bindings, but an administrator must also review and revoke stale grants elsewhere in Unity Catalog.
 
 ## Guardrails

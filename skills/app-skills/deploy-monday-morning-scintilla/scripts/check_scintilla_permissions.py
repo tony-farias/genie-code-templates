@@ -246,7 +246,7 @@ DEFAULT_USER_SCOPES = {"IAM_ACCESS_CONTROL_READ", "IAM_CURRENT_USER_READ"}
 # "dashboards.genie" is the deprecated name of the "genie" scope.
 GENIE_SCOPES = {"GENIE", "DASHBOARDS_GENIE"}
 USER_SCOPE_REMEDIATION = (
-    "Set the App's user authorization scopes to sql:restricted-query and genie "
+    "Set the App's user authorization scopes to sql and genie "
     "(App settings > User authorization, or the Apps API user_api_scopes field), then rerun."
 )
 
@@ -276,8 +276,13 @@ def authorization_scope_check(app: dict[str, Any], mode: str) -> Check:
             )
         return Check("app.authorization_mode", PASS, "SQL and Genie run as the App service principal")
     problems = []
-    if sql_scopes != {"SQL_RESTRICTED_QUERY"}:
-        problems.append("SQL scopes are " + (", ".join(sorted(sql_scopes)) or "missing") + "; expected only SQL_RESTRICTED_QUERY")
+    if sql_scopes != {"SQL"}:
+        problems.append("SQL scopes are " + (", ".join(sorted(sql_scopes)) or "missing") + "; expected only SQL")
+    if "SQL_RESTRICTED_QUERY" in sql_scopes:
+        problems.append(
+            "sql:restricted-query tokens cannot fetch results of queries that run past the 50-second "
+            "Statement Execution wait, so slow pages fail with a 403"
+        )
     if not genie_scopes:
         problems.append("the genie scope is missing")
     if other_scopes:
@@ -294,7 +299,7 @@ def authorization_scope_check(app: dict[str, Any], mode: str) -> Check:
     return Check(
         "app.authorization_mode",
         PASS,
-        "Signed-in viewers authorize read-only SQL (sql:restricted-query) and Genie (genie)",
+        "Signed-in viewers authorize SQL (sql) and Genie (genie)",
     )
 
 

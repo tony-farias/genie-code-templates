@@ -19,7 +19,7 @@ Viewer group -> Databricks App CAN USE
                     +-> App service principal -> Foundation Model endpoint
 ```
 
-The App requests the `sql:restricted-query` and `genie` user scopes. Unity Catalog applies each viewer's grants, row filters, and masks, and SQL results are never cached across viewers. The deployment identity builds curated objects and deploys App code but is not used by the running App.
+The App requests the `sql` and `genie` user scopes. Unity Catalog applies each viewer's grants, row filters, and masks, and SQL results are never cached across viewers. The deployment identity builds curated objects and deploys App code but is not used by the running App.
 
 App authorization replaces both viewer-token branches with the App service principal:
 
@@ -79,7 +79,7 @@ Configure resources through the Databricks Apps API:
 
 Do not rely on a `resources` section in `app.yaml`. Use the App's `application_id` UUID for Unity Catalog grants. In App mode, the App receives `USE CATALOG`, `USE SCHEMA`, and `SELECT` only on the dedicated curated schema; in user mode it receives no Unity Catalog grants.
 
-The default user-authorization design requests only `sql:restricted-query` and `genie`, and grants the approved viewer group the warehouse, curated-data, and Genie privileges. App authorization requests no SQL or Genie scopes and grants those privileges to the App service principal instead.
+The default user-authorization design requests only `sql` and `genie`, and grants the approved viewer group the warehouse, curated-data, and Genie privileges. App authorization requests no SQL or Genie scopes and grants those privileges to the App service principal instead.
 
 ## Curated data boundary
 

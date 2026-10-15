@@ -17,7 +17,7 @@ env:
   - name: SCHEMA
     value: "__SCHEMA__"
   # Data identity for SQL and Genie. "user" runs them as the signed-in viewer
-  # (App user authorization scopes sql:restricted-query and genie); "app" runs
+  # (App user authorization scopes sql and genie); "app" runs
   # them as the App service principal.
   - name: AUTHORIZATION_MODE
     value: "__AUTHORIZATION_MODE__"
