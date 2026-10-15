@@ -33,6 +33,7 @@ def render_args(**overrides):
         "warehouse_id": "warehouse-1",
         "catalog": "customer_catalog",
         "schema": "monday_morning",
+        "authorization_mode": "user",
         "genie_space_id": "space-1",
         "model_endpoint": "model-1",
         "outcome_maps_url": "",
@@ -97,6 +98,8 @@ class RenderTest(unittest.TestCase):
             render_app.setting_values(render_args(warehouse_id=" "))
         with self.assertRaisesRegex(ValueError, "GENIE_SPACE_ID"):
             render_app.setting_values(render_args(genie_space_id="<approved-space-id>"))
+        with self.assertRaisesRegex(ValueError, "AUTHORIZATION_MODE"):
+            render_app.setting_values(render_args(authorization_mode="viewer"))
 
     def test_render_refuses_git_worktree_and_non_empty_output(self):
         with tempfile.TemporaryDirectory() as workdir:

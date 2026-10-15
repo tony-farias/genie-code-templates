@@ -6,9 +6,9 @@ Use three identities:
 
 1. A platform administrator performs one-time bootstrap.
 2. A deployment identity inventories Scintilla, maintains curated objects, and redeploys the existing App.
-3. The Databricks-managed App service principal runs Genie and model calls, and SQL in shared mode. In read-only user mode, the signed-in viewer runs SQL.
+3. At runtime, the signed-in viewer runs SQL and Genie in user mode (the default); the Databricks-managed App service principal runs them in App mode. The App service principal always runs model calls.
 
-Viewers receive App access through one group. They do not need direct data or compute permissions in shared mode. In read-only user mode, viewers must have warehouse and curated Unity Catalog access through approved groups.
+Viewers receive App access through one group. In user mode they also need warehouse, curated Unity Catalog, and Genie access through that group. In App mode they need no direct data or compute permissions.
 
 ## One-time administrator bootstrap
 
@@ -18,8 +18,9 @@ The administrator must:
 - select a running serverless SQL warehouse and ready Foundation Model endpoint;
 - create the App or approve reuse of an existing App in the same security boundary;
 - bind that warehouse with `CAN USE` and the endpoint with `CAN QUERY`;
-- grant the App `application_id` UUID `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the curated schema;
-- create or select the supported Genie Spaces and bind each with `CAN RUN`;
+- create or select the supported Genie Spaces;
+- in user mode, set the App's user authorization scopes to `sql:restricted-query` and `genie`, and grant the viewer group the permissions in [User authorization](#user-authorization-default);
+- in App mode, grant the App `application_id` UUID `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the curated schema, and bind each Genie Space with `CAN RUN`;
 - grant the deployment identity `CAN MANAGE` on the App;
 - grant the viewer group `CAN USE` on the App;
 - review and revoke stale App-service-principal grants before an existing App is reused.
@@ -42,9 +43,30 @@ The administrator can then leave the recurring deployment path. The deployment i
 
 `CREATE SCHEMA`, `CREATE CATALOG`, and Unity Catalog `MANAGE` are deliberately excluded.
 
-## App service principal
+## User authorization (default)
 
-| Resource | Required permission |
+SQL and Genie run with each viewer's forwarded `x-forwarded-access-token`, so Unity Catalog applies the viewer's own grants, row filters, and masks, and audit logs record the viewer. Set the App's user authorization scopes to exactly `sql:restricted-query` and `genie` (the platform adds its default `iam` read scopes). Viewers consent to these scopes the first time they open the App.
+
+| Resource | Viewer group permission |
+|---|---|
+| App | `CAN USE` |
+| Selected SQL warehouse | `CAN USE` |
+| Curated catalog | `USE CATALOG` |
+| Dedicated curated schema | `USE SCHEMA`, `SELECT` |
+| Approved Genie Spaces | `CAN RUN` |
+
+| Resource | App service principal permission |
+|---|---|
+| Selected SQL warehouse | Bound with `CAN USE` (boot-time warm-up only) |
+| Selected Foundation Model endpoint | Bound with `CAN QUERY` |
+
+The App service principal needs no Unity Catalog data grants and no Genie access. A request without a forwarded token fails rather than falling back to the App identity. User-authorized query results are never cached across viewers, so pages query the warehouse on every load.
+
+## App authorization
+
+Use this mode only when the viewers cannot be granted the curated data. Viewers need only `CAN USE` on the App.
+
+| Resource | App service principal permission |
 |---|---|
 | Selected SQL warehouse | Bound with `CAN USE` |
 | Selected Foundation Model endpoint | Bound with `CAN QUERY` |
@@ -52,20 +74,9 @@ The administrator can then leave the recurring deployment path. The deployment i
 | Curated catalog | `USE CATALOG` |
 | Dedicated curated schema | `USE SCHEMA`, `SELECT` |
 
-Do not grant the App service principal access to the licensed source schema. Use curated tables or governed views whose ownership and dependencies have been configured for that boundary.
+The App must request no SQL or Genie user scopes.
 
-## Read-only user authorization
-
-Use this mode when per-user audit, row filters, masks, differing entitlements, or an unavailable App-principal catalog grant makes shared authorization unsuitable.
-
-| Resource | Viewer permission |
-|---|---|
-| App | `CAN USE` |
-| Selected SQL warehouse | `CAN USE` |
-| Curated catalog | `USE CATALOG` |
-| Dedicated curated schema | `USE SCHEMA`, `SELECT` |
-
-Configure only `sql:restricted-query`. The backend must use the request's `x-forwarded-access-token` for Statement Execution. Never cache user-authorized query results across viewers. Genie and model calls may continue using their narrowly bound App identity.
+In either mode, do not grant the App service principal access to the licensed source schema. Use curated tables or governed views whose ownership and dependencies have been configured for that boundary.
 
 ## Existing App reuse
 
@@ -89,13 +100,13 @@ The inventory-stage check verifies:
 - ready model endpoint;
 - existing App, managed service principal, caller `CAN MANAGE`, and viewer-group `CAN USE`;
 - exact warehouse and model resource bindings;
-- the selected SQL authorization mode; shared mode checks App-principal UC access, while read-only user mode verifies the caller and warns that every viewer needs equivalent approved entitlements.
+- that the App's user scopes match `--authorization-mode`; user mode then checks the viewer group's warehouse `CAN USE` and curated-schema privileges (counting grants to `account users`), while App mode checks the App principal's curated-schema privileges.
 
 The deployment-stage check additionally verifies:
 
 - a read-only `SELECT 1 ... LIMIT 1` probe for every selected source feed;
 - accessibility of every approved Genie Space;
-- exact `CAN RUN` App bindings for those Genie Spaces.
+- `CAN RUN` for the viewer group (user mode) or exact `CAN RUN` App bindings (App mode) on those Genie Spaces; user mode warns about Genie bindings the App identity does not need.
 
 Both stages write only the local JSON report. They do not create, alter, grant, deploy, query a model, or start a Genie conversation. A failed or unverifiable check is blocking.
 

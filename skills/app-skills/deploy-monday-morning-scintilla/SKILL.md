@@ -5,7 +5,7 @@ description: Discover Walmart Scintilla Cloud Feeds, run a blocking permissions 
 
 # Deploy Monday Morning on Scintilla
 
-Recreate Monday Morning without assuming that every customer licenses the same Cloud Feeds. Default to the simplified shared-data architecture; optional services require a separate decision and permission review.
+Recreate Monday Morning without assuming that every customer licenses the same Cloud Feeds. Default to the simplified core architecture; optional services require a separate decision and permission review.
 
 Every deployment ships the same UI. The App is the locked golden template in `assets/app-template`; a run may change only the `app.yaml` env values through `scripts/render_app.py`. Read [references/app-contract.md](references/app-contract.md) before deploying.
 
@@ -20,17 +20,17 @@ Require these existing resources before deployment:
 - approved Genie Spaces for the capabilities being deployed;
 - one viewer group with `CAN USE` on the App.
 
-Use the App service principal for Genie and model serving. Choose one SQL authorization mode explicitly:
+Model serving always uses the App service principal. SQL and Genie run under one authorization mode, rendered as `AUTHORIZATION_MODE`:
 
-- **Shared App authorization:** the App service principal queries the curated schema; viewers need only `CAN USE` on the App.
-- **Read-only user authorization:** request only `sql:restricted-query` and query with `x-forwarded-access-token`; each viewer keeps their existing warehouse and Unity Catalog entitlements, row filters, and masks.
+- **User authorization (default):** the App requests the `sql:restricted-query` and `genie` user scopes, and SQL and Genie run with each viewer's forwarded `x-forwarded-access-token`. Viewers keep their existing warehouse access, Unity Catalog grants, row filters, and masks. The App service principal needs no Unity Catalog data grants and no Genie access.
+- **App authorization:** the App service principal queries the curated schema and runs Genie; viewers need only `CAN USE` on the App. Choose it only when the viewers cannot be granted the curated data.
 
-Never combine user-authorized SQL with a cross-user result cache. Do not provision Lakebase, Vector Search, a supervisor endpoint, a new catalog, or Spark compute in the core deployment.
+In user mode a request without a forwarded token fails; it never falls back to the App identity. Never combine user-authorized SQL with a cross-user result cache. Do not provision Lakebase, Vector Search, a supervisor endpoint, a new catalog, or Spark compute in the core deployment.
 
 ## Workflow
 
 1. Collect the named CLI profile, licensed source catalog/schema, pre-created curated catalog/schema, warehouse ID, model endpoint, App name, and viewer group.
-2. Ask whether the user wants to redeploy the existing App and retain that App's managed service principal. Reuse is allowed only for the same customer, workspace, and security boundary. Reuse the App itself; never detach its service principal or assign it to a different App. If the answer is no, have an administrator create a new empty App. Also select shared App authorization or read-only user authorization using the criteria above.
+2. Ask whether the user wants to redeploy the existing App and retain that App's managed service principal. Reuse is allowed only for the same customer, workspace, and security boundary. Reuse the App itself; never detach its service principal or assign it to a different App. If the answer is no, have an administrator create a new empty App. Also confirm the authorization mode: user authorization unless the customer explicitly chooses App authorization.
 3. Read [references/permissions.md](references/permissions.md). Run the read-only inventory-stage preflight before inspecting feeds:
 
    ```bash
@@ -45,6 +45,7 @@ Never combine user-authorized SQL with a cross-user result cache. Do not provisi
      --model-endpoint <endpoint-name> \
      --app-name <existing-app-name> \
      --viewer-group <group-name> \
+     --authorization-mode user \
      --output /tmp/scintilla-permissions.json
    ```
 
@@ -77,6 +78,7 @@ Never combine user-authorized SQL with a cross-user result cache. Do not provisi
      --model-endpoint <endpoint-name> \
      --app-name <existing-app-name> \
      --viewer-group <group-name> \
+     --authorization-mode user \
      --genie-space-id <approved-space-id> \
      --output /tmp/scintilla-deployment-permissions.json
    ```
@@ -91,6 +93,7 @@ Never combine user-authorized SQL with a cross-user result cache. Do not provisi
       --warehouse-id <warehouse-id> \
       --catalog <customer-catalog> \
       --schema <curated-schema> \
+      --authorization-mode user \
       --genie-space-id <approved-space-id> \
       --model-endpoint <endpoint-name> \
       --output /tmp/monday-morning-app
@@ -108,15 +111,16 @@ Never combine user-authorized SQL with a cross-user result cache. Do not provisi
     ```
 
 12. Treat Lakebase, Vector Search, and a supervisor as separate opt-in expansions. Re-run permission analysis and obtain approval before provisioning any of them.
-13. Validate row counts, dates, join fanout, model responses, Genie grounding, and the App service principal's runtime boundary.
+13. Validate row counts, dates, join fanout, model responses, and Genie grounding as a viewer, and confirm the runtime identity matches the authorization mode.
 
 ## Authorization rules
 
 - The deployment identity may read licensed feeds and create or update objects only in the dedicated curated schema. It does not need `MANAGE` on the source.
-- In shared mode, the App service principal receives `CAN USE` on the selected warehouse, `CAN QUERY` on the selected model endpoint, `CAN RUN` on only the approved Genie Spaces, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on only the curated schema.
-- In read-only user mode, request only `sql:restricted-query`; every viewer needs `CAN USE` on the warehouse and the required curated Unity Catalog privileges. The App service principal does not need UC data grants for user-authorized SQL.
+- In user mode (the default), the App's user authorization scopes are exactly `sql:restricted-query` and `genie`. The viewer group needs `CAN USE` on the warehouse, `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the curated schema, and `CAN RUN` on the approved Genie Spaces. The App service principal keeps only `CAN USE` on the warehouse (boot-time warm-up) and `CAN QUERY` on the model endpoint.
+- In App mode, the App requests no SQL or Genie user scopes. The App service principal receives `CAN USE` on the selected warehouse, `CAN QUERY` on the selected model endpoint, `CAN RUN` on only the approved Genie Spaces, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on only the curated schema.
+- Render and preflight with the same `--authorization-mode`; the preflight fails when the App's scopes do not match it.
 - Bind resources with the Databricks Apps API; do not rely on a `resources` block in `app.yaml`.
-- The default shared authorization mode does not request delegated SQL or Genie user scopes. Use read-only user authorization when per-user audit, row filters, differing entitlements, or unavailable App-principal catalog grants require it. Never request broader `sql` scope when `sql:restricted-query` is sufficient.
+- Never request the broader `sql` scope; `sql:restricted-query` is sufficient. Use `genie`, not the deprecated `dashboards.genie`.
 - Reusing an App preserves its service principal and historical grants. The preflight rejects unexpected warehouse, model, or Genie bindings, but an administrator must also review and revoke stale grants elsewhere in Unity Catalog.
 
 ## Guardrails

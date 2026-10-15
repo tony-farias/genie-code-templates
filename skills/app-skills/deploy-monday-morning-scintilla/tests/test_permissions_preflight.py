@@ -14,14 +14,17 @@ SPEC.loader.exec_module(MODULE)
 
 
 class FakeCli:
-    def __init__(self, *, stale_warehouse=False, deny_app_metadata=False, user_sql_auth=False,
-                 user_api_scopes=None):
+    def __init__(self, *, stale_warehouse=False, deny_app_metadata=False, user_auth=True,
+                 user_api_scopes=None, viewer_grants=True, viewer_warehouse=True, genie_binding=False):
         self.stale_warehouse = stale_warehouse
         self.deny_app_metadata = deny_app_metadata
         self.user_api_scopes = (
             user_api_scopes if user_api_scopes is not None else
-            (["sql:restricted-query"] if user_sql_auth else [])
+            (["sql:restricted-query", "genie", "iam.current-user:read"] if user_auth else [])
         )
+        self.viewer_grants = viewer_grants
+        self.viewer_warehouse = viewer_warehouse
+        self.genie_binding = genie_binding
 
     def json(self, arguments):
         prefix = tuple(arguments[:2])
@@ -38,6 +41,8 @@ class FakeCli:
             ])
         if prefix == ("warehouses", "get"):
             return {"id": "warehouse-1", "state": "RUNNING", "enable_serverless_compute": True}
+        if prefix == ("warehouses", "get-permissions"):
+            return self._acl([("group_name", "scintilla-viewers", "CAN_USE")] if self.viewer_warehouse else [])
         if prefix == ("grants", "get-effective"):
             securable_type = arguments[2]
             principal = arguments[-1]
@@ -45,6 +50,13 @@ class FakeCli:
                 if self.deny_app_metadata:
                     raise MODULE.CliError("User does not have READ METADATA")
                 values = ["USE_CATALOG"] if securable_type == "CATALOG" else ["USE_SCHEMA", "SELECT"]
+            elif principal == "account users":
+                values = []
+            elif principal == "scintilla-viewers":
+                if not self.viewer_grants:
+                    values = []
+                else:
+                    values = ["USE_CATALOG"] if securable_type == "CATALOG" else ["USE_SCHEMA", "SELECT"]
             elif securable_type == "CATALOG":
                 values = ["USE_CATALOG"]
             else:
@@ -67,6 +79,8 @@ class FakeCli:
                 "resources": [
                     *warehouse_resources,
                     {"serving_endpoint": {"name": "model-1", "permission": "CAN_QUERY"}},
+                    *([{"genie_space": {"space_id": "space-1", "permission": "CAN_RUN"}}]
+                      if self.genie_binding else []),
                 ],
             }
         if prefix == ("apps", "get-permissions"):
@@ -79,6 +93,7 @@ class FakeCli:
         if prefix == ("api", "get") and arguments[2].startswith("/api/2.0/permissions/genie/"):
             return self._acl([
                 ("service_principal_name", "app-uuid", "CAN_RUN"),
+                ("group_name", "scintilla-viewers", "CAN_RUN"),
             ])
         raise AssertionError(f"Unexpected command: {arguments}")
 
@@ -111,6 +126,7 @@ def inventory_args():
         app_name="monday-morning",
         viewer_group="scintilla-viewers",
         genie_space_id=[],
+        authorization_mode="user",
         output=Path("unused.json"),
     )
 
@@ -199,8 +215,18 @@ class PermissionsPreflightTests(unittest.TestCase):
         report = MODULE.build_report(inventory_args(), FakeCli())
         self.assertTrue(report["ready"])
         self.assertTrue(report["read_only"])
-        self.assertEqual(report["authorization_mode"], "shared_app_service_principal")
+        self.assertEqual(report["authorization_mode"], "user")
         self.assertEqual(report["summary"]["failed"], 0)
+
+    def test_app_mode_report_is_ready_with_app_principal_grants(self):
+        args = inventory_args()
+        args.authorization_mode = "app"
+        report = MODULE.build_report(args, FakeCli(user_auth=False))
+        self.assertTrue(report["ready"])
+        self.assertEqual(report["authorization_mode"], "app")
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["app_service_principal.schema_permissions"]["status"], MODULE.PASS)
+        self.assertNotIn("warehouse.viewer_group_can_use", checks)
 
     def test_inventory_report_blocks_stale_app_binding(self):
         report = MODULE.build_report(inventory_args(), FakeCli(stale_warehouse=True))
@@ -209,32 +235,60 @@ class PermissionsPreflightTests(unittest.TestCase):
         self.assertIn("app.warehouse_binding", failures)
 
     def test_app_grants_can_be_runtime_validated_without_uc_manage(self):
-        report = MODULE.build_report(
-            inventory_args(), FakeCli(deny_app_metadata=True)
-        )
+        args = inventory_args()
+        args.authorization_mode = "app"
+        report = MODULE.build_report(args, FakeCli(deny_app_metadata=True, user_auth=False))
         self.assertTrue(report["ready"])
         warnings = {item["name"] for item in report["checks"] if item["status"] == MODULE.WARN}
         self.assertIn("app_service_principal.catalog_permissions", warnings)
         self.assertIn("app_service_principal.schema_permissions", warnings)
 
-    def test_delegated_user_sql_does_not_require_app_principal_uc_grants(self):
-        report = MODULE.build_report(
-            inventory_args(), FakeCli(deny_app_metadata=True, user_sql_auth=True)
-        )
+    def test_user_mode_does_not_require_app_principal_uc_grants(self):
+        report = MODULE.build_report(inventory_args(), FakeCli(deny_app_metadata=True))
         self.assertTrue(report["ready"])
-        self.assertEqual(report["authorization_mode"], "delegated_user_sql")
         checks = {item["name"]: item for item in report["checks"]}
         self.assertEqual(checks["user_authorization.uc_boundary"]["status"], MODULE.PASS)
+        self.assertEqual(checks["viewer_group.schema_permissions"]["status"], MODULE.PASS)
+        self.assertEqual(checks["warehouse.viewer_group_can_use"]["status"], MODULE.PASS)
         self.assertNotIn("app_service_principal.schema_permissions", checks)
 
-    def test_broad_or_unused_delegated_scopes_block_preflight(self):
-        for scopes in (["sql"], ["sql:restricted-query", "sql:statement-execution"],
-                       ["genie"]):
-            with self.subTest(scopes=scopes):
-                report = MODULE.build_report(inventory_args(), FakeCli(user_api_scopes=scopes))
+    def test_user_mode_blocks_viewer_without_data_or_warehouse_access(self):
+        for cli, failed in (
+            (FakeCli(viewer_grants=False), "viewer_group.schema_permissions"),
+            (FakeCli(viewer_warehouse=False), "warehouse.viewer_group_can_use"),
+        ):
+            with self.subTest(failed=failed):
+                report = MODULE.build_report(inventory_args(), cli)
+                self.assertFalse(report["ready"])
+                failures = {item["name"] for item in report["checks"] if item["status"] == MODULE.FAIL}
+                self.assertIn(failed, failures)
+
+    def test_scopes_must_match_authorization_mode(self):
+        for mode, scopes in (
+            ("user", []),
+            ("user", ["sql:restricted-query"]),
+            ("user", ["genie"]),
+            ("user", ["sql", "genie"]),
+            ("user", ["sql:restricted-query", "sql:statement-execution", "genie"]),
+            ("user", ["sql:restricted-query", "genie", "files"]),
+            ("app", ["sql:restricted-query", "genie"]),
+            ("app", ["genie"]),
+        ):
+            with self.subTest(mode=mode, scopes=scopes):
+                args = inventory_args()
+                args.authorization_mode = mode
+                report = MODULE.build_report(args, FakeCli(user_api_scopes=scopes))
                 self.assertFalse(report["ready"])
                 checks = {item["name"]: item for item in report["checks"]}
                 self.assertEqual(checks["app.authorization_mode"]["status"], MODULE.FAIL)
+
+    def test_deprecated_genie_scope_name_warns(self):
+        report = MODULE.build_report(
+            inventory_args(), FakeCli(user_api_scopes=["sql:restricted-query", "dashboards.genie"])
+        )
+        self.assertTrue(report["ready"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["app.authorization_mode"]["status"], MODULE.WARN)
 
     def test_deployment_stage_requires_sources_and_genie_spaces(self):
         args = inventory_args()
@@ -248,17 +302,27 @@ class PermissionsPreflightTests(unittest.TestCase):
         )
 
     def test_deployment_stage_accepts_direct_genie_acl(self):
+        for mode, check in (("user", "viewer_can_run"), ("app", "app_can_run")):
+            with self.subTest(mode=mode):
+                args = inventory_args()
+                args.stage = "deployment"
+                args.source_table = ["store_sales"]
+                args.genie_space_id = ["space-1"]
+                args.authorization_mode = mode
+                report = MODULE.build_report(args, FakeCli(user_auth=mode == "user"))
+                self.assertTrue(report["ready"])
+                checks = {item["name"]: item for item in report["checks"]}
+                self.assertEqual(checks[f"genie_space.space-1.{check}"]["status"], MODULE.PASS)
+
+    def test_user_mode_flags_unneeded_genie_binding(self):
         args = inventory_args()
         args.stage = "deployment"
         args.source_table = ["store_sales"]
         args.genie_space_id = ["space-1"]
-        report = MODULE.build_report(args, FakeCli())
+        report = MODULE.build_report(args, FakeCli(genie_binding=True))
         self.assertTrue(report["ready"])
         checks = {item["name"]: item for item in report["checks"]}
-        self.assertEqual(
-            checks["genie_space.space-1.app_can_run"]["status"],
-            MODULE.PASS,
-        )
+        self.assertEqual(checks["app.genie_bindings"]["status"], MODULE.WARN)
 
 
 if __name__ == "__main__":

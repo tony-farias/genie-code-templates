@@ -12,6 +12,7 @@ The configurable values are:
 |---|---|---|
 | `WAREHOUSE_ID` | yes | Serverless SQL warehouse the App queries |
 | `CATALOG`, `SCHEMA` | yes | Curated namespace that holds every required table |
+| `AUTHORIZATION_MODE` | yes | `user` (default) runs SQL and Genie as the signed-in viewer; `app` runs them as the App service principal |
 | `GENIE_SPACE_ID` | yes | Approved Genie Space behind "Ask Genie" |
 | `LLM_MODEL` | yes | Foundation Model endpoint name |
 | `OUTCOME_MAPS_URL` | no | Sidebar link back to the Outcome Maps deck; empty hides it |

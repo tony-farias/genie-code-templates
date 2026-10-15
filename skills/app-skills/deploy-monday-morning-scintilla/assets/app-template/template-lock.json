@@ -2,13 +2,13 @@
   "files": {
     ".gitignore": "a3a8750a8acabee8db6e5a74c3a5e1080d675aa6417f1c6d45887e33d4ddc6d3",
     "api/filters.js": "08d05389216a13a6b2c686289983bed0b4816537067021576af5d4aeec521c4f",
-    "api/genie.js": "6812432b53e41d7acec72b5b4bbfa6946d6f7222ba210e847a1f46f92b90ab11",
+    "api/genie.js": "e59558b9cf5a77550f1e4d7c36bdaca2895627894f2e9a193414d4cdc9ef5fb4",
     "api/lakebase.js": "83c78957fda15fb31571058802fa32bdb960180b38ce6b5d51c66ac5fded4760",
     "api/ontology_catalog.js": "211c5a57466abe9318364896d170c7dcf431ec8d09617461a4fe197365a5e850",
     "api/personas.js": "75aa1d819453f5699c7c69eb9de7089cd457bc0ab8965321f969f22002fdbe92",
     "api/routes.scintilla.js": "108c8d96c6d96ff61ee8558138ff70897fb6addac92eacbef1dcf3debd491db5",
-    "api/sql.js": "8a2cadd9475ba8a26d82af97b6edda76482c121f16d4d9684407a05a8affb0f0",
-    "app.yaml": "a1b2599d4d0b31489a1568312dc777c6da4a7347dd32d52128cc75e783221adc",
+    "api/sql.js": "4e2e29c53296db4201ccb627c81fed5a6ea67faa63cc19823f7e9441b7f117ad",
+    "app.yaml": "ab89e8cca8ad2fcf0e3f2557efb534422fd2bb8d74c7e7d5c29b02a2a9f58360",
     "dist/assets/AgentsPage-CPoMY1VW.js": "1308cb731f8bda08004f39f1e8852063d332f053322e7b2276b548d760c9c869",
     "dist/assets/AppHeader-C7pJ_2A-.js": "e5f2df51d31a805f595dbaf4024a543f1db917426dfb1fb4795b9c4b98cd18ce",
     "dist/assets/CategoryPage-DjEz-B4a.js": "aeb86b5754622ae47612b212058d9c96bf96b6b1a048c63c1c7d49f03e5714c2",
@@ -86,5 +86,5 @@
     "tailwind.config.js": "c0cae66804871243ba296c0f087695454fb29a57983ffad598fe603cbc975cb0",
     "vite.config.js": "cda2ce4fb4531a41822cf8d2dd8af4cebb30138b15669c488f4b2be5a304fa0c"
   },
-  "template_version": "1.0.0"
+  "template_version": "1.1.0"
 }

@@ -16,6 +16,11 @@ env:
     value: "__CATALOG__"
   - name: SCHEMA
     value: "__SCHEMA__"
+  # Data identity for SQL and Genie. "user" runs them as the signed-in viewer
+  # (App user authorization scopes sql:restricted-query and genie); "app" runs
+  # them as the App service principal.
+  - name: AUTHORIZATION_MODE
+    value: "__AUTHORIZATION_MODE__"
   # Genie space powering the live "Ask Genie" chat (real Conversation API).
   - name: GENIE_SPACE_ID
     value: "__GENIE_SPACE_ID__"

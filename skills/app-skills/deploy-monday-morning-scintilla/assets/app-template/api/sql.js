@@ -1,7 +1,10 @@
 // Databricks Statement Execution API client.
-// Uses the signed-in viewer's scoped token for request-driven SQL so Unity
-// Catalog row filters, masks, and grants are enforced per user. Background
-// work without a request can fall back to the App service principal.
+// AUTHORIZATION_MODE selects the data identity for request-driven SQL and Genie:
+//   user (default) — the signed-in viewer's forwarded token, so Unity Catalog
+//                    grants, row filters, and masks apply per viewer. A request
+//                    without that token fails; it never falls back to the App.
+//   app            — the App service principal for every call.
+// Work outside a request (the boot-time warehouse warm-up) uses the App identity.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -11,6 +14,7 @@ const CATALOG = process.env.CATALOG;
 const SCHEMA = process.env.SCHEMA;
 const CLIENT_ID = process.env.DATABRICKS_CLIENT_ID;
 const CLIENT_SECRET = process.env.DATABRICKS_CLIENT_SECRET;
+const AUTHORIZATION_MODE = process.env.AUTHORIZATION_MODE || 'user';
 
 let cachedToken = null;
 let tokenExpiresAt = 0;
@@ -49,8 +53,25 @@ async function getToken() {
   return cachedToken;
 }
 
-async function getQueryToken() {
-  return requestAuthorization.getStore()?.userToken || getToken();
+// True when the current call runs as the signed-in viewer rather than the App.
+export function runsAsViewer() {
+  return AUTHORIZATION_MODE === 'user' && Boolean(requestAuthorization.getStore());
+}
+
+// Token for Databricks data calls (SQL and Genie) under AUTHORIZATION_MODE.
+export async function dataToken() {
+  if (AUTHORIZATION_MODE !== 'user' && AUTHORIZATION_MODE !== 'app') {
+    throw new Error(`AUTHORIZATION_MODE must be "user" or "app", not "${AUTHORIZATION_MODE}"`);
+  }
+  if (!runsAsViewer()) return getToken();
+  const userToken = requestAuthorization.getStore().userToken;
+  if (!userToken) {
+    throw new Error(
+      'User authorization is not configured: the request has no x-forwarded-access-token. ' +
+      'Add the sql:restricted-query and genie user scopes to the App, or set AUTHORIZATION_MODE to "app".'
+    );
+  }
+  return userToken;
 }
 
 function rowsToObjects(result) {
@@ -84,15 +105,14 @@ export async function runQuery(statement, params = []) {
   if (!WAREHOUSE_ID) throw new Error('WAREHOUSE_ID env var not set');
   if (!CATALOG || !SCHEMA) throw new Error('CATALOG and SCHEMA env vars must be set');
   if (!HOST) throw new Error('DATABRICKS_HOST env var not set');
-  const userToken = requestAuthorization.getStore()?.userToken || null;
   // A shared cache could cross user authorization boundaries. Only cache
-  // background/App-identity queries; viewer-driven queries always reach UC.
-  const cacheKey = params.length || userToken ? null : statement;
+  // App-identity queries; viewer-driven queries always reach UC.
+  const cacheKey = params.length || runsAsViewer() ? null : statement;
   if (cacheKey) {
     const hit = _qcache.get(cacheKey);
     if (hit && Date.now() - hit.at < QUERY_CACHE_TTL_MS) return hit.rows;
   }
-  const token = userToken || await getQueryToken();
+  const token = await dataToken();
   const payload = {
     warehouse_id: WAREHOUSE_ID,
     statement,

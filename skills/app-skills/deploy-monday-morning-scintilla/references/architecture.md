@@ -2,7 +2,7 @@
 
 ## Simplified core runtime
 
-Shared App authorization:
+User authorization (default):
 
 ```text
 Viewer group -> Databricks App CAN USE
@@ -13,23 +13,23 @@ Viewer group -> Databricks App CAN USE
                     v
               Express REST API
                     |
-                    +-> App service principal -> serverless SQL warehouse
-                    |                              -> curated UC schema
-                    +-> App service principal -> approved Genie Spaces
+                    +-> viewer token (x-forwarded-access-token) -> serverless SQL warehouse
+                    |                                              -> curated UC schema
+                    +-> viewer token (x-forwarded-access-token) -> approved Genie Spaces
                     +-> App service principal -> Foundation Model endpoint
 ```
 
-The App service principal is the shared runtime identity. The deployment identity builds curated objects and deploys App code but is not used by the running App. Viewers do not receive direct data or compute permissions unless the customer explicitly selects a delegated per-user authorization design.
+The App requests the `sql:restricted-query` and `genie` user scopes. Unity Catalog applies each viewer's grants, row filters, and masks, and SQL results are never cached across viewers. The deployment identity builds curated objects and deploys App code but is not used by the running App.
 
-Read-only user authorization changes only the SQL branch:
+App authorization replaces both viewer-token branches with the App service principal:
 
 ```text
-Viewer -> Databricks App -> x-forwarded-access-token -> SQL warehouse -> curated UC schema
-                       +-> App service principal -> approved Genie Spaces
-                       +-> App service principal -> Foundation Model endpoint
+Viewer -> Databricks App -> App service principal -> SQL warehouse -> curated UC schema
+                         +-> App service principal -> approved Genie Spaces
+                         +-> App service principal -> Foundation Model endpoint
 ```
 
-Request only `sql:restricted-query`. Unity Catalog applies each viewer's grants, row filters, and masks. Disable shared SQL-result caching for user-authorized requests.
+In App mode, viewers receive no direct data or compute permissions.
 
 ## Existing resources
 
@@ -52,8 +52,8 @@ Before reuse:
 
 - confirm the App belongs to the same customer and data boundary;
 - verify the deployment identity has `CAN MANAGE`;
-- require exact warehouse, model endpoint, and approved Genie bindings;
-- verify the service principal has access only to the curated data boundary needed here;
+- require exact warehouse and model endpoint bindings, plus the approved Genie bindings in App mode;
+- verify the service principal holds no data access beyond its mode: none in user mode, only the curated boundary in App mode;
 - have an administrator revoke unrelated historical grants.
 
 ## App configuration
@@ -61,6 +61,7 @@ Before reuse:
 The golden template's `app.yaml` carries placeholders that `scripts/render_app.py` fills; no other file changes. See [app-contract.md](app-contract.md).
 
 - `WAREHOUSE_ID`, `CATALOG`, and `SCHEMA`;
+- `AUTHORIZATION_MODE` (`user` by default, or `app`);
 - `GENIE_SPACE_ID`;
 - `LLM_MODEL`;
 - optional `OUTCOME_MAPS_URL`;
@@ -74,11 +75,11 @@ Configure resources through the Databricks Apps API:
 
 - SQL warehouse: `CAN USE`;
 - Foundation Model endpoint: `CAN QUERY`;
-- each approved Genie Space: `CAN RUN`.
+- each approved Genie Space: `CAN RUN` (App mode only).
 
-Do not rely on a `resources` section in `app.yaml`. Use the App's `application_id` UUID for Unity Catalog grants. The App receives `USE CATALOG`, `USE SCHEMA`, and `SELECT` only on the dedicated curated schema.
+Do not rely on a `resources` section in `app.yaml`. Use the App's `application_id` UUID for Unity Catalog grants. In App mode, the App receives `USE CATALOG`, `USE SCHEMA`, and `SELECT` only on the dedicated curated schema; in user mode it receives no Unity Catalog grants.
 
-The default shared-identity design does not request delegated SQL or Genie scopes. If per-user auditing, row filters, masks, different data entitlements, or unavailable App-principal catalog grants require user authorization, request only `sql:restricted-query` and grant approved viewer groups the required warehouse and curated-data privileges. Genie remains App-authorized unless the design explicitly requires per-user Genie access.
+The default user-authorization design requests only `sql:restricted-query` and `genie`, and grants the approved viewer group the warehouse, curated-data, and Genie privileges. App authorization requests no SQL or Genie scopes and grants those privileges to the App service principal instead.
 
 ## Curated data boundary
 

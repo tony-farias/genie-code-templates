@@ -18,6 +18,7 @@ def setting_values(args: argparse.Namespace) -> dict[str, str]:
         "WAREHOUSE_ID": args.warehouse_id,
         "CATALOG": args.catalog,
         "SCHEMA": args.schema,
+        "AUTHORIZATION_MODE": args.authorization_mode,
         "GENIE_SPACE_ID": args.genie_space_id,
         "LLM_MODEL": args.model_endpoint,
         "OUTCOME_MAPS_URL": args.outcome_maps_url,
@@ -27,6 +28,8 @@ def setting_values(args: argparse.Namespace) -> dict[str, str]:
             raise ValueError(f"{key} is required")
         if re.fullmatch(r"__[A-Z_]+__", value) or re.search(r"[<>\n]", value):
             raise ValueError(f"{key} still looks like a placeholder or contains a newline")
+    if values["AUTHORIZATION_MODE"] not in contract.AUTHORIZATION_MODES:
+        raise ValueError("AUTHORIZATION_MODE must be one of " + ", ".join(contract.AUTHORIZATION_MODES))
     return values
 
 
@@ -79,6 +82,10 @@ def render(values: dict[str, str], output: Path) -> dict[str, object]:
         "template_version": lock["template_version"],
         "ui_shell_sha256": lock["files"]["dist/index.html"],
         "rendered_files": sorted(contract.RENDERED_FILES),
+        "authorization_mode": values["AUTHORIZATION_MODE"],
+        "required_user_api_scopes": (
+            list(contract.USER_AUTHORIZATION_SCOPES) if values["AUTHORIZATION_MODE"] == "user" else []
+        ),
     }
 
 
@@ -87,6 +94,10 @@ def main() -> None:
     parser.add_argument("--warehouse-id", required=True)
     parser.add_argument("--catalog", required=True, help="Curated catalog the App queries")
     parser.add_argument("--schema", required=True, help="Curated schema the App queries")
+    parser.add_argument(
+        "--authorization-mode", choices=("user", "app"), default="user",
+        help="Data identity for SQL and Genie: the signed-in viewer (default) or the App service principal",
+    )
     parser.add_argument("--genie-space-id", required=True)
     parser.add_argument("--model-endpoint", required=True)
     parser.add_argument("--outcome-maps-url", default="", help="Optional sidebar link; omit to hide it")

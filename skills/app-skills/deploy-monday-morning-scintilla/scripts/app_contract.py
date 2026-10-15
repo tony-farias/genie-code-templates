@@ -13,10 +13,13 @@ TEMPLATE = ROOT / "assets" / "app-template"
 LOCK = TEMPLATE / "template-lock.json"
 
 # Bump with every approved template change, then run verify_app_template.py --update-lock.
-TEMPLATE_VERSION = "1.0.0"
+TEMPLATE_VERSION = "1.1.0"
 
 # app.yaml env values that render_app.py replaces. Every other file ships byte-for-byte.
-REQUIRED_SETTINGS = ("WAREHOUSE_ID", "CATALOG", "SCHEMA", "GENIE_SPACE_ID", "LLM_MODEL")
+REQUIRED_SETTINGS = ("WAREHOUSE_ID", "CATALOG", "SCHEMA", "AUTHORIZATION_MODE", "GENIE_SPACE_ID", "LLM_MODEL")
+# Data identity for SQL and Genie; "user" needs the App user scopes below.
+AUTHORIZATION_MODES = ("user", "app")
+USER_AUTHORIZATION_SCOPES = ("sql:restricted-query", "genie")
 OPTIONAL_SETTINGS = ("OUTCOME_MAPS_URL",)
 RENDERED_FILES = {"app.yaml"}
 

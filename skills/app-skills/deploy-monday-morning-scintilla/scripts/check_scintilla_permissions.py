@@ -241,14 +241,81 @@ def service_principal_id(app: dict[str, Any]) -> str:
     )
 
 
-def delegated_sql_scopes(app: dict[str, Any]) -> set[str]:
-    """Return delegated SQL scopes that make the signed-in user the data identity."""
+# Scopes Databricks Apps grants every App; they reach no data or compute.
+DEFAULT_USER_SCOPES = {"IAM_ACCESS_CONTROL_READ", "IAM_CURRENT_USER_READ"}
+# "dashboards.genie" is the deprecated name of the "genie" scope.
+GENIE_SCOPES = {"GENIE", "DASHBOARDS_GENIE"}
+USER_SCOPE_REMEDIATION = (
+    "Set the App's user authorization scopes to sql:restricted-query and genie "
+    "(App settings > User authorization, or the Apps API user_api_scopes field), then rerun."
+)
+
+
+def user_scopes(app: dict[str, Any]) -> set[str]:
+    """Normalized user authorization scopes requested by the App."""
     return {
-        normalize(scope).replace(":", "_")
+        normalize(scope).replace(":", "_").replace(".", "_")
         for scope in app.get("user_api_scopes") or []
-        if normalize(scope).replace(":", "_").startswith("SQL_")
-        or normalize(scope).replace(":", "_") == "SQL"
     }
+
+
+def authorization_scope_check(app: dict[str, Any], mode: str) -> Check:
+    """The App's user scopes must match the rendered AUTHORIZATION_MODE."""
+    scopes = user_scopes(app)
+    sql_scopes = {scope for scope in scopes if scope == "SQL" or scope.startswith("SQL_")}
+    genie_scopes = scopes & GENIE_SCOPES
+    other_scopes = scopes - sql_scopes - genie_scopes - DEFAULT_USER_SCOPES
+    if mode == "app":
+        delegated = sql_scopes | genie_scopes | other_scopes
+        if delegated:
+            return Check(
+                "app.authorization_mode",
+                FAIL,
+                "App mode ignores viewer tokens, but the App requests user scopes: " + ", ".join(sorted(delegated)),
+                "Remove the user authorization scopes, or rerun with --authorization-mode user.",
+            )
+        return Check("app.authorization_mode", PASS, "SQL and Genie run as the App service principal")
+    problems = []
+    if sql_scopes != {"SQL_RESTRICTED_QUERY"}:
+        problems.append("SQL scopes are " + (", ".join(sorted(sql_scopes)) or "missing") + "; expected only SQL_RESTRICTED_QUERY")
+    if not genie_scopes:
+        problems.append("the genie scope is missing")
+    if other_scopes:
+        problems.append("unexpected scopes: " + ", ".join(sorted(other_scopes)))
+    if problems:
+        return Check("app.authorization_mode", FAIL, "; ".join(problems), USER_SCOPE_REMEDIATION)
+    if "GENIE" not in genie_scopes:
+        return Check(
+            "app.authorization_mode",
+            WARN,
+            "Viewers authorize SQL and Genie, but the App uses the deprecated dashboards.genie scope name",
+            "Replace dashboards.genie with genie in the App's user authorization scopes.",
+        )
+    return Check(
+        "app.authorization_mode",
+        PASS,
+        "Signed-in viewers authorize read-only SQL (sql:restricted-query) and Genie (genie)",
+    )
+
+
+def viewer_privilege_check(
+    name: str,
+    actual: set[str],
+    required: set[str],
+    errors: list[str],
+    remediation: str,
+) -> Check:
+    """Viewer grants that cannot be inspected need runtime confirmation, not a hard stop."""
+    check = privilege_check(name, actual, required, errors, remediation)
+    if check.status == FAIL and errors:
+        return Check(
+            name,
+            WARN,
+            "Could not confirm the viewer group's privileges; validate as a viewer after deployment. "
+            + check.detail,
+            remediation,
+        )
+    return check
 
 
 def app_bindings(app: dict[str, Any]) -> dict[str, list[tuple[str, str]]]:
@@ -342,7 +409,8 @@ def add_cli_check(
 
 def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, Any]:
     checks: list[Check] = []
-    authorization_mode = "shared_app_service_principal"
+    authorization_mode = args.authorization_mode
+    user_mode = authorization_mode == "user"
     identity = add_cli_check(
         checks,
         "caller.identity",
@@ -412,6 +480,24 @@ def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, A
             "Caller successfully executed a read-only SQL statement",
             "Grant the caller CAN USE on the selected SQL warehouse.",
         )
+        if user_mode:
+            try:
+                warehouse_permissions = client.json(["warehouses", "get-permissions", args.warehouse_id])
+                levels = acl_levels(warehouse_permissions, {args.viewer_group, "users"})
+                can_use = has_level(levels, "CAN_USE")
+                checks.append(Check(
+                    "warehouse.viewer_group_can_use",
+                    PASS if can_use else FAIL,
+                    f"{args.viewer_group} can use the warehouse" if can_use else f"{args.viewer_group} lacks CAN USE on the warehouse",
+                    None if can_use else f"Grant CAN USE on the SQL warehouse to group {args.viewer_group}.",
+                ))
+            except CliError as exc:
+                checks.append(Check(
+                    "warehouse.viewer_group_can_use",
+                    WARN,
+                    f"Could not read warehouse permissions: {exc}",
+                    f"Have a warehouse manager confirm group {args.viewer_group} has CAN USE.",
+                ))
 
     source_catalog_privileges, source_catalog_errors = effective_privileges(
         client, "CATALOG", args.source_catalog, principals
@@ -539,7 +625,6 @@ def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, A
         ))
 
     app_principal = service_principal_id(app or {})
-    user_sql_scopes: set[str] = set()
     if app:
         checks.append(Check(
             "app.service_principal",
@@ -570,33 +655,9 @@ def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, A
             "Remove Lakebase, Vector Search, job, volume, secret, and other optional bindings from the core App."
             if bindings["other"] else None,
         ))
-        user_sql_scopes = delegated_sql_scopes(app)
-        unused_genie_scopes = {
-            normalize(scope).replace(":", "_")
-            for scope in app.get("user_api_scopes") or []
-            if normalize(scope).replace(":", "_").startswith("GENIE_")
-            or normalize(scope).replace(":", "_") == "GENIE"
-        }
-        unsupported_scopes = (user_sql_scopes - {"SQL_RESTRICTED_QUERY"}) | unused_genie_scopes
-        authorization_mode = (
-            "delegated_user_sql"
-            if user_sql_scopes
-            else "shared_app_service_principal"
-        )
-        checks.append(Check(
-            "app.authorization_mode",
-            FAIL if unsupported_scopes else PASS,
-            "Unsupported delegated scopes: " + ", ".join(sorted(unsupported_scopes))
-            if unsupported_scopes else (
-                "Signed-in viewers authorize read-only SQL with SQL_RESTRICTED_QUERY"
-                if user_sql_scopes else
-                "Shared SQL uses the Databricks-managed App service principal"
-            ),
-            "Request only sql:restricted-query for delegated SQL; Genie uses the App service principal."
-            if unsupported_scopes else None,
-        ))
+        checks.append(authorization_scope_check(app, authorization_mode))
 
-    if app_principal and not user_sql_scopes:
+    if app_principal and not user_mode:
         app_catalog_privileges, app_catalog_errors = effective_privileges(
             client, "CATALOG", args.curated_catalog, {app_principal}
         )
@@ -617,17 +678,33 @@ def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, A
             app_schema_errors,
             "Have the namespace owner grant USE SCHEMA and SELECT on the dedicated curated schema to the App application_id UUID.",
         ))
-    elif app_principal and user_sql_scopes:
+    elif app_principal and user_mode:
         checks.append(Check(
             "user_authorization.uc_boundary",
             PASS,
             "App-principal UC data grants are not required; signed-in viewer grants, row filters, and masks are authoritative",
         ))
-        checks.append(Check(
-            "user_authorization.viewer_permissions",
-            WARN,
-            "The caller's SQL and UC access passed, but this preflight does not prove every App viewer has equivalent data entitlements",
-            "Grant the approved data-viewer group CAN USE on the warehouse and USE CATALOG, USE SCHEMA, and SELECT on the curated boundary.",
+        # Every account user inherits grants made to "account users".
+        viewer_principals = {args.viewer_group, "account users"}
+        viewer_catalog_privileges, viewer_catalog_errors = effective_privileges(
+            client, "CATALOG", args.curated_catalog, viewer_principals
+        )
+        checks.append(viewer_privilege_check(
+            "viewer_group.catalog_permissions",
+            viewer_catalog_privileges,
+            {"USE_CATALOG"},
+            viewer_catalog_errors,
+            f"Grant USE CATALOG on {args.curated_catalog} to group {args.viewer_group}.",
+        ))
+        viewer_schema_privileges, viewer_schema_errors = effective_privileges(
+            client, "SCHEMA", curated_schema_name, viewer_principals
+        )
+        checks.append(viewer_privilege_check(
+            "viewer_group.schema_permissions",
+            viewer_schema_privileges,
+            {"USE_SCHEMA", "SELECT"},
+            viewer_schema_errors,
+            f"Grant USE SCHEMA and SELECT on {curated_schema_name} to group {args.viewer_group}.",
         ))
 
     if app:
@@ -649,9 +726,22 @@ def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, A
                         "api", "get", f"/api/2.0/permissions/genie/{space_id}"
                     ]),
                     "Genie Space permissions are visible",
-                    "Have a Genie Space manager verify the App service principal ACL.",
+                    "Have a Genie Space manager verify the Genie Space ACL.",
                 )
-                if genie_permissions:
+                if genie_permissions and user_mode:
+                    levels = acl_levels(genie_permissions, {args.viewer_group, "users"})
+                    can_run = has_level(levels, "CAN_RUN")
+                    checks.append(Check(
+                        f"genie_space.{space_id}.viewer_can_run",
+                        PASS if can_run else FAIL,
+                        f"{args.viewer_group} has CAN RUN"
+                        if can_run else f"{args.viewer_group} lacks CAN RUN",
+                        None if can_run else (
+                            f"Grant CAN RUN on the Genie Space to group {args.viewer_group} "
+                            "through /api/2.0/permissions/genie/<space-id>."
+                        ),
+                    ))
+                elif genie_permissions:
                     levels = acl_levels(genie_permissions, {app_principal})
                     can_run = has_level(levels, "CAN_RUN")
                     checks.append(Check(
@@ -664,7 +754,14 @@ def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, A
                             "through /api/2.0/permissions/genie/<space-id>."
                         ),
                     ))
-            if bindings["genie_space"]:
+            if bindings["genie_space"] and user_mode:
+                checks.append(Check(
+                    "app.genie_bindings",
+                    WARN,
+                    "Genie Spaces are bound to the App service principal, which user mode does not need",
+                    "Remove the Genie bindings so the App identity holds no data access.",
+                ))
+            elif bindings["genie_space"]:
                 checks.append(binding_check(
                     "app.genie_bindings",
                     bindings["genie_space"],
@@ -741,7 +838,7 @@ def finish_report(
             "Reusing an App can retain unrelated historical grants outside the requested securables; an administrator must review and revoke stale grants.",
             *(
                 ["Delegated SQL validates the caller only; every viewer still needs approved warehouse and curated-data entitlements."]
-                if authorization_mode == "delegated_user_sql"
+                if authorization_mode == "user"
                 else []
             ),
         ],
@@ -761,6 +858,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-endpoint", required=True)
     parser.add_argument("--app-name", required=True)
     parser.add_argument("--viewer-group", required=True)
+    parser.add_argument(
+        "--authorization-mode", choices=("user", "app"), default="user",
+        help="Data identity the App will run with; must match render_app.py",
+    )
     parser.add_argument("--genie-space-id", action="append", default=[])
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()

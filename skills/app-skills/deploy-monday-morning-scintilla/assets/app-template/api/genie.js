@@ -1,9 +1,10 @@
-// Genie Conversational API helper. Uses the same SP OAuth token as the SQL helper.
+// Genie Conversational API helper. Uses the same data identity as the SQL
+// helper: the signed-in viewer by default, or the App with AUTHORIZATION_MODE=app.
+
+import { dataToken, runsAsViewer } from './sql.js';
 
 const HOST = (process.env.DATABRICKS_HOST || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
 const SPACE_ID = process.env.GENIE_SPACE_ID;
-const CLIENT_ID = process.env.DATABRICKS_CLIENT_ID;
-const CLIENT_SECRET = process.env.DATABRICKS_CLIENT_SECRET;
 
 // Per-page Genie spaces (Pass 2). Each page's AI Genie tab can target its own
 // space via these env vars; until they're set, everything falls back to the
@@ -19,28 +20,9 @@ export function spaceForApp(appKey) {
   return (appKey && SPACE_BY_APP[appKey]) || SPACE_ID;
 }
 
-let cachedToken = null;
-let tokenExpiresAt = 0;
-
-export async function getToken() {
-  const now = Date.now();
-  if (cachedToken && now < tokenExpiresAt - 60_000) return cachedToken;
-  const auth = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
-  const r = await fetch(`https://${HOST}/oidc/v1/token`, {
-    method: 'POST',
-    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'all-apis' }),
-  });
-  if (!r.ok) throw new Error(`token: ${r.status} ${await r.text()}`);
-  const j = await r.json();
-  cachedToken = j.access_token;
-  tokenExpiresAt = now + (j.expires_in || 3600) * 1000;
-  return cachedToken;
-}
-
 async function genieFetch(path, init = {}) {
   if (!SPACE_ID) throw new Error('GENIE_SPACE_ID env var not set');
-  const token = await getToken();
+  const token = await dataToken();
   const r = await fetch(`https://${HOST}${path}`, {
     ...init,
     headers: {
@@ -121,14 +103,18 @@ export async function listConversations() {
 
 let cachedUserId = null;
 export async function getCurrentUserId() {
-  if (cachedUserId) return cachedUserId;
+  // The App identity is fixed, so its id is cached; a viewer's id is per request.
+  const viewer = runsAsViewer();
+  if (!viewer && cachedUserId) return cachedUserId;
   try {
     const r = await genieFetch('/api/2.0/preview/scim/v2/Me');
-    cachedUserId = r?.id ? Number(r.id) : null;
+    const id = r?.id ? Number(r.id) : null;
+    if (!viewer) cachedUserId = id;
+    return id;
   } catch (e) {
     console.error('[genie/me]', e);
+    return viewer ? null : cachedUserId;
   }
-  return cachedUserId;
 }
 
 export async function getConversation(conversationId) {
