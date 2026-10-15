@@ -30,7 +30,36 @@ def setting_values(args: argparse.Namespace) -> dict[str, str]:
             raise ValueError(f"{key} still looks like a placeholder or contains a newline")
     if values["AUTHORIZATION_MODE"] not in contract.AUTHORIZATION_MODES:
         raise ValueError("AUTHORIZATION_MODE must be one of " + ", ".join(contract.AUTHORIZATION_MODES))
+    # Checked separately: a read-only SELECT entry may legitimately contain < or >.
+    values["TABLE_MAP"] = table_map_value(getattr(args, "table_map", None))
     return values
+
+
+TABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def table_map_value(path: Path | None) -> str:
+    """Validate a table map file and return it as compact JSON ("{}" when absent)."""
+    if not path:
+        return "{}"
+    table_map = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(table_map, dict):
+        raise ValueError("The table map must be a JSON object")
+    allowed = set(contract.REQUIRED_TABLES) | set(contract.MAPPABLE_EXTRA_TABLES)
+    for name, target in table_map.items():
+        if name not in allowed:
+            raise ValueError(f"Table map key {name!r} is not a table the App queries")
+        if isinstance(target, str):
+            if not TABLE_NAME.fullmatch(target):
+                raise ValueError(f"Table map target for {name} must be a table name in the configured schema")
+        elif isinstance(target, dict) and isinstance(target.get("select"), str):
+            select = target["select"].strip()
+            if not re.match(r"(?is)^(SELECT|WITH)\b", select) or ";" in select:
+                raise ValueError(f"Table map entry for {name} must be a single read-only SELECT")
+        else:
+            raise ValueError(f"Table map entry for {name} must be a table name or {{\"select\": \"SELECT ...\"}}")
+    return json.dumps(table_map, separators=(",", ":"), sort_keys=True)
+
 
 
 def inside_git_worktree(path: Path) -> bool:
@@ -101,6 +130,10 @@ def main() -> None:
     parser.add_argument("--genie-space-id", required=True)
     parser.add_argument("--model-endpoint", required=True)
     parser.add_argument("--outcome-maps-url", default="", help="Optional sidebar link; omit to hide it")
+    parser.add_argument(
+        "--table-map", type=Path,
+        help="JSON file mapping App table names to differently named tables in --catalog.--schema",
+    )
     parser.add_argument("--output", type=Path, required=True, help="Empty directory outside any Git worktree")
     args = parser.parse_args()
     print(json.dumps(render(setting_values(args), args.output.resolve()), indent=2))

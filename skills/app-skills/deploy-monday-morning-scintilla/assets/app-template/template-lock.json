@@ -6,9 +6,9 @@
     "api/lakebase.js": "83c78957fda15fb31571058802fa32bdb960180b38ce6b5d51c66ac5fded4760",
     "api/ontology_catalog.js": "211c5a57466abe9318364896d170c7dcf431ec8d09617461a4fe197365a5e850",
     "api/personas.js": "75aa1d819453f5699c7c69eb9de7089cd457bc0ab8965321f969f22002fdbe92",
-    "api/routes.scintilla.js": "108c8d96c6d96ff61ee8558138ff70897fb6addac92eacbef1dcf3debd491db5",
-    "api/sql.js": "8f863d1b2894375580825c655de90ad2b985ea876954edb62cc4bb5e292a89c5",
-    "app.yaml": "9ee10da43af0ea8fd54425e8be024bbc591f217ce24eb4e0aac4ef69f713b606",
+    "api/routes.scintilla.js": "3ee26c21827883625e7bd1a0cfebb7086bd6bedb009fd5261731535e67242da8",
+    "api/sql.js": "8b2801ed7a033a3a786867c5f3be086f4dd9d68c19c219582ad672bd75900292",
+    "app.yaml": "115d2feeb9f56695390168b6ae8491cc9de0f6530ba6048280c59968e264d1aa",
     "dist/assets/AgentsPage-CPoMY1VW.js": "1308cb731f8bda08004f39f1e8852063d332f053322e7b2276b548d760c9c869",
     "dist/assets/AppHeader-C7pJ_2A-.js": "e5f2df51d31a805f595dbaf4024a543f1db917426dfb1fb4795b9c4b98cd18ce",
     "dist/assets/CategoryPage-DjEz-B4a.js": "aeb86b5754622ae47612b212058d9c96bf96b6b1a048c63c1c7d49f03e5714c2",
@@ -86,5 +86,5 @@
     "tailwind.config.js": "c0cae66804871243ba296c0f087695454fb29a57983ffad598fe603cbc975cb0",
     "vite.config.js": "cda2ce4fb4531a41822cf8d2dd8af4cebb30138b15669c488f4b2be5a304fa0c"
   },
-  "template_version": "1.1.1"
+  "template_version": "1.2.0"
 }

@@ -35,7 +35,7 @@ In App mode, viewers receive no direct data or compute permissions.
 
 The core deployment consumes, rather than provisions:
 
-1. A customer-owned curated schema outside the licensed source schema.
+1. The licensed Scintilla schema, read directly in user mode (with a table map for differently named tables), or a customer-owned curated schema for App mode.
 2. A running serverless SQL warehouse.
 3. A Databricks App with its managed service principal.
 4. Approved Genie Spaces supported by the licensed feeds.
@@ -83,7 +83,7 @@ The default user-authorization design requests only `sql` and `genie`, and grant
 
 ## Curated data boundary
 
-Do not query licensed Scintilla feeds directly from the App. Build documented curated tables or governed views at stable grains, such as:
+In user mode the App may read the licensed feeds directly: each viewer's own grants, row filters, and masks apply, and a table map adapts differently named tables without creating any object. In App mode, never give the App service principal the licensed schema; build documented curated tables or governed views instead. Curated objects are also the answer when slow pages need pre-aggregation, at stable grains such as:
 
 - daily sales by item, location, and channel;
 - inventory by item, location, and day;

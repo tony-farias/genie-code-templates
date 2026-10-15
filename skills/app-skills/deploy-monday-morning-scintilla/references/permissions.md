@@ -5,7 +5,7 @@
 Use three identities:
 
 1. A platform administrator performs one-time bootstrap.
-2. A deployment identity inventories Scintilla, maintains curated objects, and redeploys the existing App.
+2. A deployment identity inventories Scintilla, maintains the table map (or curated objects, when used), and redeploys the existing App.
 3. At runtime, the signed-in viewer runs SQL and Genie in user mode (the default); the Databricks-managed App service principal runs them in App mode. The App service principal always runs model calls.
 
 Viewers receive App access through one group. In user mode they also need warehouse, curated Unity Catalog, and Genie access through that group. In App mode they need no direct data or compute permissions.
@@ -14,7 +14,7 @@ Viewers receive App access through one group. In user mode they also need wareho
 
 The administrator must:
 
-- create the dedicated curated schema;
+- create a dedicated curated schema, only if the deployment uses one;
 - select a running serverless SQL warehouse and ready Foundation Model endpoint;
 - create the App or approve reuse of an existing App in the same security boundary;
 - bind that warehouse with `CAN USE` and the endpoint with `CAN QUERY`;
@@ -34,8 +34,8 @@ The administrator can then leave the recurring deployment path. The deployment i
 | Licensed source catalog | `USE CATALOG` |
 | Licensed source schema | `USE SCHEMA` |
 | Selected Scintilla feeds | `SELECT` |
-| Curated catalog | `USE CATALOG` |
-| Pre-created curated schema | `USE SCHEMA`, `CREATE TABLE`, `MODIFY`, `SELECT` |
+| Curated catalog (only if used) | `USE CATALOG` |
+| Pre-created curated schema (only if used) | `USE SCHEMA`, `CREATE TABLE`, `MODIFY`, `SELECT` |
 | SQL warehouse | `CAN USE` |
 | Existing App | `CAN MANAGE` |
 | Approved Genie Spaces | Access sufficient to inspect and validate them |
@@ -51,8 +51,8 @@ SQL and Genie run with each viewer's forwarded `x-forwarded-access-token`, so Un
 |---|---|
 | App | `CAN USE` |
 | Selected SQL warehouse | `CAN USE` |
-| Curated catalog | `USE CATALOG` |
-| Dedicated curated schema | `USE SCHEMA`, `SELECT` |
+| Catalog the App reads | `USE CATALOG` |
+| Schema the App reads (licensed or curated) | `USE SCHEMA`, `SELECT` |
 | Approved Genie Spaces | `CAN RUN` |
 
 | Resource | App service principal permission |
@@ -96,7 +96,7 @@ The inventory-stage check verifies:
 - running serverless warehouse and successful read-only SQL execution;
 - write access to the caller's Workspace Files home used for App staging;
 - source catalog/schema visibility;
-- curated namespace effective privileges;
+- effective privileges on the schema the App reads; omit `--curated-catalog` and `--curated-schema` to read the licensed schema directly, where the preflight also checks that every App table resolves through `--table-map` and rejects App mode;
 - ready model endpoint;
 - existing App, managed service principal, caller `CAN MANAGE`, and viewer-group `CAN USE`;
 - exact warehouse and model resource bindings;

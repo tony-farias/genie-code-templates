@@ -25,6 +25,7 @@ class FakeCli:
         self.viewer_grants = viewer_grants
         self.viewer_warehouse = viewer_warehouse
         self.genie_binding = genie_binding
+        self.source_tables = {f"fact_{name}" for name in MODULE.contract.REQUIRED_TABLES}
 
     def json(self, arguments):
         prefix = tuple(arguments[:2])
@@ -100,6 +101,9 @@ class FakeCli:
     def statement(self, warehouse_id, statement):
         if warehouse_id != "warehouse-1":
             raise AssertionError(warehouse_id)
+        if statement.startswith("SELECT table_name FROM"):
+            return {"status": {"state": "SUCCEEDED"},
+                    "result": {"data_array": [[name] for name in sorted(self.source_tables)]}}
         return {"status": {"state": "SUCCEEDED"}, "result": {"data_array": [[1]]}}
 
     @staticmethod
@@ -127,6 +131,7 @@ def inventory_args():
         viewer_group="scintilla-viewers",
         genie_space_id=[],
         authorization_mode="user",
+        table_map=None,
         output=Path("unused.json"),
     )
 
@@ -313,6 +318,38 @@ class PermissionsPreflightTests(unittest.TestCase):
                 self.assertTrue(report["ready"])
                 checks = {item["name"]: item for item in report["checks"]}
                 self.assertEqual(checks[f"genie_space.space-1.{check}"]["status"], MODULE.PASS)
+
+    def test_direct_source_with_table_map_needs_no_curated_writes(self):
+        import json, tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump({name: f"fact_{name}" for name in MODULE.contract.REQUIRED_TABLES}, handle)
+        args = inventory_args()
+        args.curated_catalog = args.curated_schema = None
+        args.table_map = Path(handle.name)
+        report = MODULE.build_report(args, FakeCli())
+        self.assertTrue(report["ready"], [c for c in report["checks"] if c["status"] == MODULE.FAIL])
+        self.assertTrue(report["requested"]["direct_source"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["table_map.resolves"]["status"], MODULE.PASS)
+        self.assertIn("SELECT", checks["curated_schema.permissions"]["detail"])
+        self.assertNotIn("CREATE_TABLE", checks["curated_schema.permissions"]["detail"])
+
+    def test_direct_source_reports_unmapped_tables(self):
+        args = inventory_args()
+        args.curated_catalog = args.curated_schema = None
+        report = MODULE.build_report(args, FakeCli())
+        self.assertFalse(report["ready"])
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["table_map.resolves"]["status"], MODULE.FAIL)
+        self.assertIn("store_sales", checks["table_map.resolves"]["detail"])
+
+    def test_direct_source_rejects_app_mode(self):
+        args = inventory_args()
+        args.curated_catalog = args.curated_schema = None
+        args.authorization_mode = "app"
+        report = MODULE.build_report(args, FakeCli(user_auth=False))
+        failures = {item["name"] for item in report["checks"] if item["status"] == MODULE.FAIL}
+        self.assertIn("direct_source.authorization_mode", failures)
 
     def test_user_mode_flags_unneeded_genie_binding(self):
         args = inventory_args()

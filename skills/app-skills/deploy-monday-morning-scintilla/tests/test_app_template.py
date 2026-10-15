@@ -37,6 +37,7 @@ def render_args(**overrides):
         "genie_space_id": "space-1",
         "model_endpoint": "model-1",
         "outcome_maps_url": "",
+        "table_map": None,
     }
     values.update(overrides)
     return mock.Mock(**values)
@@ -100,6 +101,22 @@ class RenderTest(unittest.TestCase):
             render_app.setting_values(render_args(genie_space_id="<approved-space-id>"))
         with self.assertRaisesRegex(ValueError, "AUTHORIZATION_MODE"):
             render_app.setting_values(render_args(authorization_mode="viewer"))
+
+    def test_table_map_renders_as_compact_json_and_rejects_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "map.json"
+            good.write_text(json.dumps({
+                "store_sales": "fact_store_item_sales",
+                "upc_sales": {"select": "SELECT u.*, i.wm_item_nbr FROM fact_upc_sales u JOIN item_dim i ON u.k > 0"},
+            }))
+            values = render_app.setting_values(render_args(table_map=good))
+            self.assertEqual("fact_store_item_sales", json.loads(values["TABLE_MAP"])["store_sales"])
+            for bad in ({"not_a_table": "x"}, {"store_sales": "x; DROP"}, {"upc_sales": {"select": "DELETE FROM x"}}):
+                path = Path(directory) / "bad.json"
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):
+                    render_app.setting_values(render_args(table_map=path))
+        self.assertEqual("{}", render_app.setting_values(render_args())["TABLE_MAP"])
 
     def test_render_refuses_git_worktree_and_non_empty_output(self):
         with tempfile.TemporaryDirectory() as workdir:

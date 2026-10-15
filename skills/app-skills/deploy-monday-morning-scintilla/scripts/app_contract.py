@@ -13,14 +13,16 @@ TEMPLATE = ROOT / "assets" / "app-template"
 LOCK = TEMPLATE / "template-lock.json"
 
 # Bump with every approved template change, then run verify_app_template.py --update-lock.
-TEMPLATE_VERSION = "1.1.1"
+TEMPLATE_VERSION = "1.2.0"
 
 # app.yaml env values that render_app.py replaces. Every other file ships byte-for-byte.
 REQUIRED_SETTINGS = ("WAREHOUSE_ID", "CATALOG", "SCHEMA", "AUTHORIZATION_MODE", "GENIE_SPACE_ID", "LLM_MODEL")
 # Data identity for SQL and Genie; "user" needs the App user scopes below.
 AUTHORIZATION_MODES = ("user", "app")
 USER_AUTHORIZATION_SCOPES = ("sql", "genie")
-OPTIONAL_SETTINGS = ("OUTCOME_MAPS_URL",)
+OPTIONAL_SETTINGS = ("OUTCOME_MAPS_URL", "TABLE_MAP")
+# Tables TABLE_MAP may rename besides REQUIRED_TABLES (optional feed-refresh status).
+MAPPABLE_EXTRA_TABLES = ("wmt_cf_status_tbl",)
 RENDERED_FILES = {"app.yaml"}
 
 # Client routes and their sidebar labels. Every route serves the same dist/index.html shell.

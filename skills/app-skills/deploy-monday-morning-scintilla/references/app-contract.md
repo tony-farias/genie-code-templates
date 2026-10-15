@@ -11,11 +11,12 @@ The configurable values are:
 | Setting | Required | Purpose |
 |---|---|---|
 | `WAREHOUSE_ID` | yes | Serverless SQL warehouse the App queries |
-| `CATALOG`, `SCHEMA` | yes | Curated namespace that holds every required table |
+| `CATALOG`, `SCHEMA` | yes | Schema the App reads: the licensed schema (user mode) or a curated one |
 | `AUTHORIZATION_MODE` | yes | `user` (default) runs SQL and Genie as the signed-in viewer; `app` runs them as the App service principal |
 | `GENIE_SPACE_ID` | yes | Approved Genie Space behind "Ask Genie" |
 | `LLM_MODEL` | yes | Foundation Model endpoint name |
 | `OUTCOME_MAPS_URL` | no | Sidebar link back to the Outcome Maps deck; empty hides it |
+| `TABLE_MAP` | no | JSON map from the App's table names to differently named tables in `CATALOG.SCHEMA`, or to a read-only `SELECT`; `{}` when names already match. Rendered from `--table-map` |
 
 ## Why the UI cannot drift
 
@@ -29,7 +30,7 @@ The configurable values are:
 
 Sidebar navigation, in order: Home, Sales, Forecast, Inventory, Hourly Stats, Category, E-com, Agents, Commerce Exchange, then Personalized and Architecture. The legacy routes `/app/summary` (redirects to Sales) and `/app/sku/:skuId` remain routed.
 
-The App has no per-feature flags. Every page queries the curated schema directly, so every table in `REQUIRED_TABLES` must exist there. A missing feed is a deployment blocker; never hide, stub, or regenerate a page to work around it.
+The App has no per-feature flags. Every page queries `CATALOG.SCHEMA`, so every table in `REQUIRED_TABLES` must exist there under its own name or through `TABLE_MAP`. Each mapped table becomes a CTE prepended to the statements that use it, so no view or other object is created. A missing feed is a deployment blocker; never hide, stub, or regenerate a page to work around it.
 
 ## Stable API routes
 

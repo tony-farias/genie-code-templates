@@ -12,6 +12,9 @@ import sys
 import time
 from typing import Any, Iterable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import app_contract as contract  # noqa: E402
+
 
 PASS = "PASS"
 WARN = "WARN"
@@ -412,8 +415,50 @@ def add_cli_check(
         return None
 
 
+def load_table_map(path: Path | None) -> dict[str, Any]:
+    if not path:
+        return {}
+    table_map = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(table_map, dict):
+        raise ValueError("The table map must be a JSON object")
+    return table_map
+
+
+def table_map_check(
+    table_map: dict[str, Any],
+    visible_tables: set[str],
+    source_schema_name: str,
+) -> Check:
+    """Every table the App queries must resolve to an existing table in the source schema."""
+    missing = []
+    adapters = []
+    for name in contract.REQUIRED_TABLES:
+        target = table_map.get(name, name)
+        if isinstance(target, dict):
+            adapters.append(name)
+        elif str(target) not in visible_tables:
+            missing.append(f"{name} -> {target}" if name in table_map else name)
+    if missing:
+        return Check(
+            "table_map.resolves",
+            FAIL,
+            "Tables the App queries are missing from " + source_schema_name + ": " + ", ".join(missing),
+            "Map each missing name to its existing table with --table-map (no views are needed), or report the missing feed.",
+        )
+    detail = f"All {len(contract.REQUIRED_TABLES)} App tables resolve to existing tables"
+    if adapters:
+        detail += "; read-only SELECT entries are validated at runtime: " + ", ".join(sorted(adapters))
+    return Check("table_map.resolves", PASS, detail)
+
+
 def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, Any]:
     checks: list[Check] = []
+    # Direct mode: no curated schema, the App reads the licensed schema with TABLE_MAP.
+    direct = not (args.curated_catalog and args.curated_schema)
+    if direct:
+        args.curated_catalog, args.curated_schema = args.source_catalog, args.source_schema
+    table_map = load_table_map(args.table_map)
+    args.direct_source, args.table_map_entries = direct, sorted(table_map)
     authorization_mode = args.authorization_mode
     user_mode = authorization_mode == "user"
     identity = add_cli_check(
@@ -529,6 +574,22 @@ def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, A
         f"SELECT count(*) FROM {quote_identifier(args.source_catalog)}.information_schema.tables "
         f"WHERE table_schema = {sql_literal(args.source_schema)}"
     )
+    if direct:
+        try:
+            listing = client.statement(
+                args.warehouse_id,
+                f"SELECT table_name FROM {quote_identifier(args.source_catalog)}.information_schema.tables "
+                f"WHERE table_schema = {sql_literal(args.source_schema)}",
+            )
+            names = {str(row[0]) for row in (listing.get("result", {}).get("data_array") or []) if row}
+            checks.append(table_map_check(table_map, names, f"{args.source_catalog}.{args.source_schema}"))
+        except (CliError, TypeError, ValueError) as exc:
+            checks.append(Check(
+                "table_map.resolves",
+                FAIL,
+                str(exc),
+                "Grant metadata visibility on the source schema, then rerun.",
+            ))
     try:
         source_metadata = client.statement(args.warehouse_id, source_count_sql)
         visible_tables = int(first_scalar(source_metadata) or 0)
@@ -578,10 +639,18 @@ def build_report(args: argparse.Namespace, client: DatabricksCli) -> dict[str, A
     checks.append(privilege_check(
         "curated_schema.permissions",
         curated_schema_privileges,
-        {"USE_SCHEMA", "CREATE_TABLE", "MODIFY", "SELECT"},
+        {"USE_SCHEMA", "SELECT"} if direct else {"USE_SCHEMA", "CREATE_TABLE", "MODIFY", "SELECT"},
         curated_schema_errors,
-        "Grant USE SCHEMA, CREATE TABLE, MODIFY, and SELECT on the pre-created curated schema.",
+        "Grant USE SCHEMA and SELECT on the source schema." if direct
+        else "Grant USE SCHEMA, CREATE TABLE, MODIFY, and SELECT on the pre-created curated schema.",
     ))
+    if direct and not user_mode:
+        checks.append(Check(
+            "direct_source.authorization_mode",
+            FAIL,
+            "App mode would give the App service principal direct access to the licensed schema",
+            "Use --authorization-mode user to read the licensed schema directly, or build a curated schema for App mode.",
+        ))
 
     endpoint = add_cli_check(
         checks,
@@ -825,6 +894,8 @@ def finish_report(
                 "tables": sorted(set(args.source_table)),
             },
             "curated": {"catalog": args.curated_catalog, "schema": args.curated_schema},
+            "direct_source": args.direct_source,
+            "table_map_entries": args.table_map_entries,
             "warehouse_id": args.warehouse_id,
             "model_endpoint": args.model_endpoint,
             "viewer_group": args.viewer_group,
@@ -857,8 +928,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-catalog", required=True)
     parser.add_argument("--source-schema", required=True)
     parser.add_argument("--source-table", action="append", default=[])
-    parser.add_argument("--curated-catalog", required=True)
-    parser.add_argument("--curated-schema", required=True)
+    parser.add_argument("--curated-catalog", help="Curated catalog; omit to read the source schema directly")
+    parser.add_argument("--curated-schema", help="Curated schema; omit to read the source schema directly")
+    parser.add_argument("--table-map", type=Path, help="JSON map from App table names to existing source tables")
     parser.add_argument("--warehouse-id", required=True)
     parser.add_argument("--model-endpoint", required=True)
     parser.add_argument("--app-name", required=True)

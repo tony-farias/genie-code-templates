@@ -16,6 +16,10 @@ env:
     value: "__CATALOG__"
   - name: SCHEMA
     value: "__SCHEMA__"
+  # Optional JSON map from the App's table names to tables in CATALOG.SCHEMA that
+  # are named differently; "{}" means the tables already use the App's names.
+  - name: TABLE_MAP
+    value: "__TABLE_MAP__"
   # Data identity for SQL and Genie. "user" runs them as the signed-in viewer
   # (App user authorization scopes sql and genie); "app" runs
   # them as the App service principal.

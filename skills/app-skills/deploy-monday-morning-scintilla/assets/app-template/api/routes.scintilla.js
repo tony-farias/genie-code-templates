@@ -3,7 +3,7 @@
 // All figures come straight from the configured CATALOG.SCHEMA via the bound
 // SQL warehouse (catalog/schema set in sql.js). No mock data.
 
-import { runQuery, config as sqlConfig } from './sql.js';
+import { runQuery, logicalTableName, config as sqlConfig } from './sql.js';
 import { resolveRange, vendorClause, categoryClause, categoryItemClause, vendorItemClause, parseFilters, calendar } from './filters.js';
 import { recordAction, listActions } from './lakebase.js';
 import * as genie from './genie.js';
@@ -2011,7 +2011,7 @@ export function mountScintillaRoutes(app) {
          WHERE table_schema = ? ORDER BY table_name, ordinal_position`, [sch]);
       if (!cols.length) throw new Error('no columns visible');
       for (const r of cols) {
-        (colsByTable[r.table_name] ||= []).push({ name: r.column_name, type: r.data_type });
+        (colsByTable[logicalTableName(r.table_name)] ||= []).push({ name: r.column_name, type: r.data_type });
       }
       // Live row counts for the referenced tables (one cheap batched query).
       const refList = [...referenced].filter((t) => colsByTable[t]);

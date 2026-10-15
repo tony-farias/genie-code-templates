@@ -16,6 +16,69 @@ const CLIENT_ID = process.env.DATABRICKS_CLIENT_ID;
 const CLIENT_SECRET = process.env.DATABRICKS_CLIENT_SECRET;
 const AUTHORIZATION_MODE = process.env.AUTHORIZATION_MODE || 'user';
 
+// TABLE_MAP lets the App read a schema whose tables use different names, without
+// creating views or any other object. Each entry becomes a CTE that is prepended
+// to the statements that use it, so every query runs unchanged:
+//   "store_sales": "fact_store_item_sales"          -> SELECT * FROM <catalog>.<schema>.fact_store_item_sales
+//   "upc_sales": {"select": "SELECT ... FROM ..."}  -> a read-only SELECT over existing tables
+const TABLE_MAP = parseTableMap(process.env.TABLE_MAP);
+const PHYSICAL_TO_LOGICAL = Object.fromEntries(
+  Object.entries(TABLE_MAP).filter(([, target]) => target.table).map(([name, target]) => [target.table, name])
+);
+
+function parseTableMap(raw) {
+  if (!raw || !raw.trim()) return {};
+  const map = {};
+  for (const [name, target] of Object.entries(JSON.parse(raw))) {
+    if (!/^[a-z_][a-z0-9_]*$/.test(name)) throw new Error(`TABLE_MAP key "${name}" is not a table name`);
+    if (typeof target === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(target)) {
+      map[name] = { table: target };
+    } else if (target && typeof target.select === 'string'
+               && /^\s*(SELECT|WITH)\b/i.test(target.select) && !target.select.includes(';')) {
+      map[name] = { select: target.select.trim() };
+    } else {
+      throw new Error(`TABLE_MAP entry "${name}" must be a table name or {"select": "SELECT ..."}`);
+    }
+  }
+  return map;
+}
+
+const quoteIdent = (value) => '`' + String(value).replace(/`/g, '``') + '`';
+const mentions = (text, name) => new RegExp(`\\b${name}\\b`).test(text);
+
+// Prepend a CTE for every mapped table the statement (or another included CTE) uses.
+export function withTableMap(statement) {
+  const used = new Set(Object.keys(TABLE_MAP).filter((name) => mentions(statement, name)));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const name of [...used]) {
+      const body = TABLE_MAP[name].select || '';
+      for (const other of Object.keys(TABLE_MAP)) {
+        if (!used.has(other) && mentions(body, other)) { used.add(other); grew = true; }
+      }
+    }
+  }
+  if (!used.size) return statement;
+  // Renames first, so a SELECT entry may build on a renamed table.
+  const ordered = [...used].sort((a, b) => Number(Boolean(TABLE_MAP[a].select)) - Number(Boolean(TABLE_MAP[b].select)));
+  const ctes = ordered.map((name) => {
+    const target = TABLE_MAP[name];
+    const body = target.table
+      ? `SELECT * FROM ${quoteIdent(CATALOG)}.${quoteIdent(SCHEMA)}.${quoteIdent(target.table)}`
+      : target.select;
+    return `${name} AS (${body})`;
+  }).join(',\n  ');
+  const leadingWith = /^\s*WITH\s+/i;
+  return leadingWith.test(statement)
+    ? statement.replace(leadingWith, `WITH ${ctes},\n  `)
+    : `WITH ${ctes}\n${statement}`;
+}
+
+// The App's name for a table, given its name in the configured schema.
+export function logicalTableName(name) {
+  return PHYSICAL_TO_LOGICAL[name] || name;
+}
+
 let cachedToken = null;
 let tokenExpiresAt = 0;
 const requestAuthorization = new AsyncLocalStorage();
@@ -105,6 +168,7 @@ export async function runQuery(statement, params = []) {
   if (!WAREHOUSE_ID) throw new Error('WAREHOUSE_ID env var not set');
   if (!CATALOG || !SCHEMA) throw new Error('CATALOG and SCHEMA env vars must be set');
   if (!HOST) throw new Error('DATABRICKS_HOST env var not set');
+  statement = withTableMap(statement);
   // A shared cache could cross user authorization boundaries. Only cache
   // App-identity queries; viewer-driven queries always reach UC.
   const cacheKey = params.length || runsAsViewer() ? null : statement;

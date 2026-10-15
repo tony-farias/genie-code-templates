@@ -15,7 +15,7 @@ Require these existing resources before deployment:
 
 - one running serverless SQL warehouse;
 - one ready Foundation Model endpoint;
-- one customer-owned curated schema outside the licensed source schema;
+- the licensed Scintilla schema the viewers can already read. In user mode the App reads it directly, and a table map covers tables that use different names, so no views or other objects are created. Use a customer-owned curated schema only for App mode or for a feed that needs more than a rename or a read-only join;
 - one Databricks App with its Databricks-managed service principal;
 - approved Genie Spaces for the capabilities being deployed;
 - one viewer group with `CAN USE` on the App.
@@ -29,7 +29,7 @@ In user mode a request without a forwarded token fails; it never falls back to t
 
 ## Workflow
 
-1. Collect the named CLI profile, licensed source catalog/schema, pre-created curated catalog/schema, warehouse ID, model endpoint, App name, and viewer group.
+1. Collect the named CLI profile, licensed source catalog/schema, warehouse ID, model endpoint, App name, and viewer group. Collect a pre-created curated catalog/schema only if the deployment needs one (App mode, or a feed that a table map cannot cover).
 2. Ask whether the user wants to redeploy the existing App and retain that App's managed service principal. Reuse is allowed only for the same customer, workspace, and security boundary. Reuse the App itself; never detach its service principal or assign it to a different App. If the answer is no, have an administrator create a new empty App. Also confirm the authorization mode: user authorization unless the customer explicitly chooses App authorization.
 3. Read [references/permissions.md](references/permissions.md). Run the read-only inventory-stage preflight before inspecting feeds:
 
@@ -39,8 +39,7 @@ In user mode a request without a forwarded token fails; it never falls back to t
      --stage inventory \
      --source-catalog <licensed-catalog> \
      --source-schema <scintilla-schema> \
-     --curated-catalog <customer-catalog> \
-     --curated-schema <curated-schema> \
+     --table-map table-map.json \
      --warehouse-id <warehouse-id> \
      --model-endpoint <endpoint-name> \
      --app-name <existing-app-name> \
@@ -61,8 +60,8 @@ In user mode a request without a forwarded token fails; it never falls back to t
      --output /tmp/scintilla-readiness.md
    ```
 
-6. Read [references/cloud-feeds.md](references/cloud-feeds.md). Map feeds using column and grain evidence, not names alone. Every table in `REQUIRED_TABLES` (`scripts/app_contract.py`) must be available. If any is missing, stop and report it: the golden UI has no feature flags, so never hide, stub, or regenerate a page to work around a missing feed.
-7. Read [references/architecture.md](references/architecture.md). Produce a customer-specific core plan covering curated views/tables, App configuration, Genie Spaces, validation, costs, and rollback. Have an administrator create or bind any missing Genie Spaces before the deployment gate.
+6. Read [references/cloud-feeds.md](references/cloud-feeds.md). Map feeds using column and grain evidence, not names alone. Every table in `REQUIRED_TABLES` (`scripts/app_contract.py`) must be available. When the customer's tables use different names, write `table-map.json` instead of creating views: map each App name to the existing table (`"store_sales": "fact_store_item_sales"`), or to a single read-only `SELECT` when a column needs a join (`"upc_sales": {"select": "SELECT ... FROM fact_upc_sales u LEFT JOIN ..."}`). The App reads those tables as they are. If a feed is missing, stop and report it: the golden UI has no feature flags, so never hide, stub, or regenerate a page to work around a missing feed.
+7. Read [references/architecture.md](references/architecture.md). Produce a customer-specific core plan covering the table map (or curated objects, if any), App configuration, Genie Spaces, validation, costs, and rollback. Have an administrator create or bind any missing Genie Spaces before the deployment gate.
 8. Rerun the preflight at the deployment stage with every confirmed source table and approved Genie Space. Stop unless `ready` is `true`:
 
    ```bash
@@ -72,8 +71,7 @@ In user mode a request without a forwarded token fails; it never falls back to t
      --source-catalog <licensed-catalog> \
      --source-schema <scintilla-schema> \
      --source-table <confirmed-table> \
-     --curated-catalog <customer-catalog> \
-     --curated-schema <curated-schema> \
+     --table-map table-map.json \
      --warehouse-id <warehouse-id> \
      --model-endpoint <endpoint-name> \
      --app-name <existing-app-name> \
@@ -91,8 +89,9 @@ In user mode a request without a forwarded token fails; it never falls back to t
     python3 scripts/verify_app_template.py   # add --skip-build when npm is unavailable
     python3 scripts/render_app.py \
       --warehouse-id <warehouse-id> \
-      --catalog <customer-catalog> \
-      --schema <curated-schema> \
+      --catalog <licensed-catalog> \
+      --schema <scintilla-schema> \
+      --table-map table-map.json \
       --authorization-mode user \
       --genie-space-id <approved-space-id> \
       --model-endpoint <endpoint-name> \
@@ -115,8 +114,8 @@ In user mode a request without a forwarded token fails; it never falls back to t
 
 ## Authorization rules
 
-- The deployment identity may read licensed feeds and create or update objects only in the dedicated curated schema. It does not need `MANAGE` on the source.
-- In user mode (the default), the App's user authorization scopes are exactly `sql` and `genie`. The viewer group needs `CAN USE` on the warehouse, `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the curated schema, and `CAN RUN` on the approved Genie Spaces. The App service principal keeps only `CAN USE` on the warehouse (boot-time warm-up) and `CAN QUERY` on the model endpoint.
+- The deployment identity reads licensed feeds and does not need `MANAGE` on the source. When the App reads the licensed schema directly, the deployment creates nothing and needs only `USE SCHEMA` and `SELECT`. It creates or updates objects only in a dedicated curated schema, and only when one is used.
+- In user mode (the default), the App's user authorization scopes are exactly `sql` and `genie`. The viewer group needs `CAN USE` on the warehouse, `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the schema the App reads (the licensed schema, or a curated one), and `CAN RUN` on the approved Genie Spaces. The App service principal keeps only `CAN USE` on the warehouse (boot-time warm-up) and `CAN QUERY` on the model endpoint.
 - In App mode, the App requests no SQL or Genie user scopes. The App service principal receives `CAN USE` on the selected warehouse, `CAN QUERY` on the selected model endpoint, `CAN RUN` on only the approved Genie Spaces, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on only the curated schema.
 - Render and preflight with the same `--authorization-mode`; the preflight fails when the App's scopes do not match it.
 - Bind resources with the Databricks Apps API; do not rely on a `resources` block in `app.yaml`.
@@ -128,11 +127,11 @@ In user mode a request without a forwarded token fails; it never falls back to t
 - Run and pass the applicable preflight before inventory or deployment. Never silently continue after a failed or unverifiable check.
 - Treat Scintilla data as customer-licensed and supplier-scoped. Do not copy it across customers or metastores.
 - Never reuse an App or its service principal across customers, workspaces, or security boundaries.
-- Never create a new catalog as a fallback. A platform administrator must pre-create the curated namespace.
+- Never create a new catalog as a fallback. When a curated namespace is needed, a platform administrator must pre-create it. Do not create views only to rename tables; use the table map.
 - Do not synthesize a missing licensed feed and present it as Scintilla. Stop and report the gap.
 - Never edit, restyle, regenerate, or rebuild the App during a deployment. Deploy only `render_app.py` output, and never run `verify_app_template.py --update-lock` as part of a deployment.
 - Treat a failed template, render, or UI-parity check as a deployment failure, not an invitation to fix the UI.
-- Preserve source grain. Aggregate only in documented curated views or tables.
+- Preserve source grain. Aggregate only in documented curated views or tables, when they are used.
 - Parameterize catalog, schema, warehouse, Genie IDs, model endpoint, App name, and viewer group.
 - Never commit credentials, customer identifiers, or workspace-specific resource IDs.
 - Make destructive replacement or cleanup a separately approved step.
