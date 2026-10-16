@@ -219,6 +219,63 @@ def examples(t: dict[str, str]) -> list[tuple[str, str, str]]:
             f"GROUP BY 1 ORDER BY net_sales DESC",
             "In-store (BIS) versus e-commerce (PICKUP, DELIVERY, SFS) net sales.",
         ),
+        # Exact App questions that the App's "category level" guidance otherwise pushes into category splits.
+        (
+            "How do brick-and-mortar store sales compare over the last 4 weeks versus the prior 4 weeks, and which "
+            "stores are underperforming?",
+            f"WITH b AS (SELECT MAX(bus_dt) AS d FROM {t['store_sales']}), "
+            f"s AS (SELECT s.store_nbr, SUM(CASE WHEN s.bus_dt > DATE_SUB(b.d, 28) THEN s.sales_amt END) AS last_4, "
+            f"SUM(CASE WHEN s.bus_dt <= DATE_SUB(b.d, 28) THEN s.sales_amt END) AS prior_4 "
+            f"FROM {t['store_sales']} s CROSS JOIN b WHERE s.svc_chnl_nm = 'BIS' AND s.bus_dt > DATE_SUB(b.d, 56) "
+            f"GROUP BY s.store_nbr) "
+            f"SELECT s.store_nbr, d.store_nm, d.city_nm, d.state_prov_cd, ROUND(s.last_4, 0) AS last_4_weeks_sales, "
+            f"ROUND(s.prior_4, 0) AS prior_4_weeks_sales, ROUND(100 * (s.last_4 / s.prior_4 - 1), 1) AS change_pct, "
+            f"ROUND(100 * (SUM(s.last_4) OVER () / SUM(s.prior_4) OVER () - 1), 1) AS all_stores_change_pct "
+            f"FROM s LEFT JOIN {t['store_dim']} d ON s.store_nbr = d.store_nbr WHERE s.prior_4 > 0 "
+            f"ORDER BY change_pct ASC LIMIT 20",
+            "In-store (BIS) sales by store, last 4 weeks versus prior 4; the 20 weakest stores and the all-store change.",
+        ),
+        (
+            "Break down e-commerce sales by channel (delivery, pickup, ship-from-store) over the last 4 weeks, and show "
+            "the trend versus the prior 4 weeks.",
+            f"WITH b AS (SELECT MAX(bus_dt) AS d FROM {t['store_sales']}) "
+            f"SELECT s.svc_chnl_nm AS channel, "
+            f"ROUND(SUM(CASE WHEN s.bus_dt > DATE_SUB(b.d, 28) THEN s.sales_amt END), 0) AS last_4_weeks_sales, "
+            f"ROUND(SUM(CASE WHEN s.bus_dt <= DATE_SUB(b.d, 28) THEN s.sales_amt END), 0) AS prior_4_weeks_sales, "
+            f"ROUND(100 * (SUM(CASE WHEN s.bus_dt > DATE_SUB(b.d, 28) THEN s.sales_amt END) / "
+            f"NULLIF(SUM(CASE WHEN s.bus_dt <= DATE_SUB(b.d, 28) THEN s.sales_amt END), 0) - 1), 1) AS change_pct "
+            f"FROM {t['store_sales']} s CROSS JOIN b WHERE s.svc_chnl_nm IN ('DELIVERY', 'PICKUP', 'SFS') "
+            f"AND s.bus_dt > DATE_SUB(b.d, 56) GROUP BY s.svc_chnl_nm ORDER BY last_4_weeks_sales DESC",
+            "E-commerce channels, last 4 weeks versus prior 4, one row per channel.",
+        ),
+        (
+            "How have units sold trended over the last 13 weeks, and how does that compare to the dollar sales trend?",
+            f"SELECT wm_yr_wk_nbr AS walmart_week, MIN(bus_dt) AS week_start, SUM(qty) AS units, "
+            f"ROUND(SUM(sales_amt), 0) AS net_sales, ROUND(SUM(sales_amt) / NULLIF(SUM(qty), 0), 2) AS avg_unit_retail "
+            f"FROM {t['store_sales']} WHERE bus_dt > DATE_SUB((SELECT MAX(bus_dt) FROM {t['store_sales']}), 91) "
+            f"GROUP BY wm_yr_wk_nbr ORDER BY walmart_week",
+            "Weekly totals of units and dollars for the last 13 weeks, not split by category.",
+        ),
+        (
+            "How has scan count (customer traffic) trended over the last 13 weeks, and how does it track with sales?",
+            f"SELECT wm_yr_wk_nbr AS walmart_week, MIN(bus_dt) AS week_start, SUM(scan_cnt) AS scans, "
+            f"ROUND(SUM(sales_amt), 0) AS net_sales, ROUND(SUM(sales_amt) / NULLIF(SUM(scan_cnt), 0), 2) AS sales_per_scan "
+            f"FROM {t['store_sales']} WHERE bus_dt > DATE_SUB((SELECT MAX(bus_dt) FROM {t['store_sales']}), 91) "
+            f"GROUP BY wm_yr_wk_nbr ORDER BY walmart_week",
+            "Weekly totals of scans and sales for the last 13 weeks, not split by category.",
+        ),
+        (
+            "Show the monthly sales trend and call out the inflection points — which months over- or under-performed "
+            "and why?",
+            f"WITH m AS (SELECT DATE_TRUNC('MONTH', bus_dt) AS month_start, SUM(sales_amt) AS net_sales, SUM(qty) AS units "
+            f"FROM {t['store_sales']} "
+            f"WHERE bus_dt >= ADD_MONTHS(DATE_TRUNC('MONTH', (SELECT MAX(bus_dt) FROM {t['store_sales']})), -12) "
+            f"GROUP BY DATE_TRUNC('MONTH', bus_dt)) "
+            f"SELECT DATE(month_start) AS month_start, ROUND(net_sales, 0) AS net_sales, units, "
+            f"ROUND(100 * (net_sales / NULLIF(LAG(net_sales) OVER (ORDER BY month_start), 0) - 1), 1) "
+            f"AS change_vs_prior_month_pct FROM m ORDER BY month_start",
+            "Monthly totals for the last 12 months with month-over-month change; the latest month may be partial.",
+        ),
         (
             "Which categories have too few or too many days of on-hand supply, and where should I rebalance inventory?",
             f"WITH vel AS (SELECT i.omni_dept_desc AS category, SUM(s.qty) / 28.0 AS daily_units "
