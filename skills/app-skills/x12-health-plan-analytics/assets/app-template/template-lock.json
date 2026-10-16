@@ -1,15 +1,15 @@
 {
   "files": {
-    "app-config.json": "e7d2a4cf50a8ac9de25c6d723b2f45a737f89c945ca0112b41c08483492b7b57",
-    "app-config.schema.json": "6755b8b0bbb47877ab5dcf1664e4a2e5891d43b46c6c9301a1ad1076b20a5a2a",
-    "app.py": "53dc2fbd4049dcd430e482851a5c0080886e8c553f705b1eed1a700c374fc50a",
+    "app-config.json": "676973e8271359bb913b5ffcf1c386f899de786443917a08e213f3dc21e6b9ae",
+    "app-config.schema.json": "7f964b5f17cf726ff53f5495c928f6647e36df16efa8b8e41f55f0d4201d8d98",
+    "app.py": "3b7c6adf294b686eaf9e89ff85701076280ad8566dcbd85b5866c48848800457",
     "app.yaml": "b3aff92855ae064861e48f3471446273d6441153548a6d99568fc39bf4ff894b",
     "frontend/dist/assets/index-BGvU5di6.css": "f61e3d17c021a9bedada5153eb1837f3dfe3f10c2eee4c166130c947ba7375ea",
     "frontend/dist/assets/index-DJ7QNLXg.js": "c13b18ee96bca6a8a0db92ab53dd8e224af8be1f66ceecb77ac8efa8d5a2d238",
     "frontend/dist/index.html": "f9d40207fa21e4bdb5b0e0b6c33c37e60f204569661685f3256da5a38b7785ff",
     "frontend/index.html": "ec23b6e3095ad8131afbbbb72453f6d17a609d49126beba140084955b2a8a898",
-    "frontend/package-lock.json": "ee4a0f48e0dd52f7a93b6219529015442d335c3de24aa62f006c61d2752c9367",
-    "frontend/package.json": "4c8473c0cb1a34192eff30267f462d8661f4159f50af91438133326f7bcb527b",
+    "frontend/package-lock.json": "3bbfd9dd1fb6c526f007d0906522c0dacf5f7a10cfb1f70fec3dc843f6086141",
+    "frontend/package.json": "0ca90cc85b52bc19049bed821f9cb9d8dc2f7e593af39affb09fe26e84a5f34e",
     "frontend/src/App.tsx": "24a7ce1ac58f375a6f31b21580fe6438e6e0b0f0d5c32e67a4766babf8213869",
     "frontend/src/Dashboard.tsx": "23b90f613afa318a9a4f88291eba63c71be8c151b3a74edeed099097024460e6",
     "frontend/src/GenieChat.tsx": "6c88952bbfd7f2a78a52309be2fd5bad7ea3113953e6f400f47af3ae1fbf283c",
@@ -28,9 +28,9 @@
     "requirements.txt": "8b1776fc66c19548320776a648f45dca122449996bc0378feebab09615e3d787",
     "server/__init__.py": "975af0bf43f19d5369f83b3b327283e527d13e7d0a4ddc67d1cac61d6f3ce9ed",
     "server/analytics.py": "3be01d33373b4f20b7ee6b56d00cc0aa4c89790e30976c8c67ad165e521db375",
-    "server/config.py": "534687f0c226413c6b04754b2710bb7f33785e249ed1bec0ea5c5924df81334c",
+    "server/config.py": "91048415008b5a0a2a0597b73cb7dc9fe71890c9a2d0579de4dc2ea4560ac696",
     "server/genie.py": "4d6b7b84536d18e4ca86b0fbc99610dbe4550dd063adf72e475c1c60d54a16c3",
     "server/sql.py": "56fa72341cdcc43b60e476c9b927c5607eabaab44abc40e9a74bfaca0502562e"
   },
-  "template_version": "1.0.1"
+  "template_version": "1.1.0"
 }

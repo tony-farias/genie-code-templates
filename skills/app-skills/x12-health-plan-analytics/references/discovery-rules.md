@@ -4,7 +4,12 @@
 
 Query `<catalog>.information_schema.tables` and `<catalog>.information_schema.columns`. Rank string and binary columns using table names, column names, comments, and tags containing terms such as `x12`, `edi`, `837`, `835`, `834`, `payload`, `message`, `body`, and `raw`.
 
+Also list `<catalog>.information_schema.volumes`. X12 usually lands as files, and the parser's native input is one whole file per row, so a Volume is a first-class candidate. Rank Volumes by name and comment tokens (`x12`, `edi`, `837`, `835`, `834`, `claim`, `remit`, `enroll`, `inbound`, `landing`, `raw`) and sample up to `--max-volumes` of them even when no token matches, because file stores are often named generically.
+
 ## Content phase
+
+For a Volume, sample files through the warehouse with `read_files(<path>, format => 'text', wholeText => true, recursiveFileLookup => true)`. Each file path (`_metadata.file_path`) is the source-record key; files larger than `--max-file-chars` are counted but not classified.
+
 
 Sample only the highest-ranked candidates. A valid X12 candidate should contain:
 
@@ -38,11 +43,34 @@ Use these statuses:
 
 The report must show component points, ratios, counts, blocking issues, and warnings. It may recommend the highest-ranked candidate for review, but it must not select or deploy it automatically. Retain `confidence` only as a backward-compatible alias for `x12_match_ratio`; do not describe that field as overall Bronze readiness.
 
+## Match likelihood and feature coverage
+
+Each candidate also reports `match_likelihood`, a summary for the person confirming the source. It is derived from the readiness score and is not a probability:
+
+| Band | Rule |
+|---|---|
+| `high` | Readiness status is `ready` |
+| `medium` | Status is `needs_review` with a score of at least 60 |
+| `low` | Any other readable candidate |
+| `unknown` | The candidate could not be sampled |
+
+`feature_coverage` maps the discovered transaction mix to what the deployment can power, so a partial source is visible before any write:
+
+| Capability | Requires |
+|---|---|
+| `provider_analysis`, `siu_letters`, `member_utilization` | 837 |
+| `payment_analysis` | 835 |
+| `coverage_context` | 834 |
+
+## Parser dry run
+
+With `--parser-dry-run`, discovery parses the sampled X12 payloads in memory with the pinned parser (`HealthcareManager.from_edi`) and reports only counts: attempted, parsed, rejected, parsed records, and rejection exception types. Parser error messages are discarded because they can quote payload content. A rejection adds the `pinned_parser_rejected_sampled_payloads` warning. The parser must be importable; PyPI may be unreachable, so put a clone of the pinned commit on `PYTHONPATH`.
+
 Source-record-key discovery may consider generic identifiers such as `record_id`, `source_record_id`, `message_id`, or `event_id`. It must not propose patient, member, subscriber, claim, provider, NPI, SSN, or account identifiers as the Bronze source-row key. Never emit sampled key values.
 
 ## Privacy
 
-Discovery output may contain table identifiers, payload-column and source-record-key column identifiers, hashes, transaction types, versions, counts, readiness evidence, and validation failures. It must not contain raw X12, sampled key values, member names, addresses, subscriber IDs, or other payload values.
+Discovery output may contain table and Volume identifiers, payload-column and source-record-key column identifiers, hashes, transaction types, versions, counts, readiness evidence, and validation failures. It must not contain raw X12, sampled key values or file paths, member names, addresses, subscriber IDs, or other payload values.
 
 ## Confirmation
 

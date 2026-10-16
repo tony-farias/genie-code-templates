@@ -21,12 +21,11 @@ from server.analytics import (
     validate_basis,
 )
 from server.config import (
-    app_workspace_client,
+    data_workspace_client,
     load_config,
     quoted_table,
     source_name,
     threshold,
-    viewer_workspace_client,
 )
 from server.genie import ask as ask_genie
 from server.sql import as_float, as_int, execute
@@ -38,7 +37,7 @@ PROVIDER_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 TIER_COLORS = {"High": "#C62828", "Medium": "#E65100", "Low": "#2E7D32"}
 LOGGER = logging.getLogger("x12_health_plan_analytics")
 
-app = FastAPI(title="Health Plan Analytics", version="1.0.1")
+app = FastAPI(title="Health Plan Analytics", version="1.1.0")
 
 
 def _basis(value: str) -> Basis:
@@ -107,7 +106,7 @@ def meta() -> dict[str, Any]:
 @app.get("/api/dashboard")
 def dashboard(request: Request, basis: str = "procedure") -> dict[str, Any]:
     selected = _basis(basis)
-    client = app_workspace_client()
+    client = data_workspace_client(request)
     cte = benchmark_cte(selected)
     try:
         totals = execute(
@@ -278,7 +277,7 @@ def provider_search(
     term = "".join(character for character in q if character.isalnum())
     if len(term) < 2:
         return {"providers": []}
-    client = app_workspace_client()
+    client = data_workspace_client(request)
     providers_table = quoted_table("providers")
     try:
         rows = execute(
@@ -407,7 +406,7 @@ def provider_detail(provider: str, request: Request, basis: str = "procedure") -
     selected_provider = _provider(provider)
     selected_basis = _basis(basis)
     try:
-        return _provider_detail(app_workspace_client(), selected_provider, selected_basis)
+        return _provider_detail(data_workspace_client(request), selected_provider, selected_basis)
     except HTTPException:
         raise
     except Exception as error:
@@ -421,7 +420,7 @@ def provider_claims(provider: str, request: Request) -> dict[str, Any]:
     claims = quoted_table("claims")
     lines = quoted_table("claim_lines")
     payments = quoted_table("payments")
-    client = app_workspace_client()
+    client = data_workspace_client(request)
     try:
         summary_rows = execute(
             client,
@@ -575,7 +574,7 @@ def provider_member_list(provider: str, request: Request) -> dict[str, Any]:
     _require_feature("member_utilization")
     selected_provider = _provider(provider)
     try:
-        return _provider_members(app_workspace_client(), selected_provider)
+        return _provider_members(data_workspace_client(request), selected_provider)
     except Exception as error:
         raise _analytics_error(error) from error
 
@@ -655,7 +654,7 @@ def provider_analysis(provider: str, request: Request, basis: str = "procedure")
     selected_provider = _provider(provider)
     selected_basis = _basis(basis)
     try:
-        return _analysis(app_workspace_client(), selected_provider, selected_basis)
+        return _analysis(data_workspace_client(request), selected_provider, selected_basis)
     except HTTPException:
         raise
     except Exception as error:
@@ -668,7 +667,7 @@ def provider_letter(provider: str, request: Request, basis: str = "procedure") -
     selected_provider = _provider(provider)
     selected_basis = _basis(basis)
     try:
-        detail = _provider_detail(app_workspace_client(), selected_provider, selected_basis)
+        detail = _provider_detail(data_workspace_client(request), selected_provider, selected_basis)
     except HTTPException:
         raise
     except Exception as error:
@@ -757,7 +756,7 @@ def genie_ask(body: GenieAsk, request: Request) -> dict[str, Any]:
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="A question is required")
     try:
-        return ask_genie(viewer_workspace_client(request), body.message.strip(), body.conversation_id)
+        return ask_genie(data_workspace_client(request), body.message.strip(), body.conversation_id)
     except Exception as error:
         raise HTTPException(status_code=502, detail="Genie is temporarily unavailable") from error
 
@@ -774,7 +773,7 @@ def provider_genie(provider: str, body: ProviderAsk, request: Request) -> dict[s
         f"Use the {selected_basis} code basis when relevant. Question: {body.message.strip()}"
     )
     try:
-        return ask_genie(viewer_workspace_client(request), prompt, body.conversation_id)
+        return ask_genie(data_workspace_client(request), prompt, body.conversation_id)
     except Exception as error:
         raise HTTPException(status_code=502, detail="Genie is temporarily unavailable") from error
 

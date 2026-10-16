@@ -6,7 +6,11 @@ include:
 
 variables:
   source_table:
-    description: Confirmed three-part raw X12 source table
+    description: Confirmed three-part raw X12 source table (leave empty for a Volume source)
+    default: ""
+  source_volume_path:
+    description: Confirmed /Volumes/... directory of raw X12 files (leave empty for a table source)
+    default: ""
   payload_column:
     default: edi_payload
   primary_key_column:

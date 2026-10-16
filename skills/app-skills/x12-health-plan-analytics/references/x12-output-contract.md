@@ -2,9 +2,9 @@
 
 ## Bronze
 
-`raw_x12` preserves `source_table`, `source_record_id`, `payload_hash`, `transaction_types`, `detected_version`, `ingested_at`, and the restricted raw payload.
+`raw_x12` preserves `source_table` (the table name or Volume path), `source_record_id`, `payload_hash`, `transaction_types`, `detected_version`, `ingested_at`, and the restricted raw payload.
 
-The input feeding Bronze therefore needs only two required source fields: a stable, non-null source-record identifier and a raw X12 payload in a `STRING` or `BINARY` column. A transaction-type column, ingestion timestamp, source filename, and sender/receiver metadata are useful but optional because the pipeline derives type, version, and payload hash from the X12 envelope. The automated discovery implementation currently inspects Unity Catalog tables; files in Volumes should first be exposed through a governed table or view.
+The input feeding Bronze therefore needs only two required source fields: a stable, non-null source-record identifier and a raw X12 payload in a `STRING` or `BINARY` column. A transaction-type column, ingestion timestamp, source filename, and sender/receiver metadata are useful but optional because the pipeline derives type, version, and payload hash from the X12 envelope. A Volume of raw X12 files is the parser's native input: the pipeline reads each file whole and uses its path as the source-record identifier, so no wrapper table is needed. Spark skips zero-byte files, so they appear in neither Bronze nor quarantine; when checking cardinality, expect the number of non-empty files.
 
 ## Silver
 

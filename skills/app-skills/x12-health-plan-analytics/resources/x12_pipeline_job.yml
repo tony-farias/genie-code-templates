@@ -25,6 +25,7 @@ resources:
             notebook_path: ../src/x12_pipeline.py
             base_parameters:
               source_table: ${var.source_table}
+              source_volume_path: ${var.source_volume_path}
               payload_column: ${var.payload_column}
               primary_key_column: ${var.primary_key_column}
               target_catalog: ${var.target_catalog}

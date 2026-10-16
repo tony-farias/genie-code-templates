@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy the rendered App with shared Gold analytics and viewer-scoped Genie."""
+"""Deploy the rendered App; SQL and Genie run as the viewer (user mode) or the App (app mode)."""
 
 from __future__ import annotations
 
@@ -12,11 +12,16 @@ import tempfile
 import time
 
 
-USER_API_SCOPES = ("dashboards.genie",)
+# User mode. `sql`, not `sql:restricted-query`: restricted tokens cannot fetch the
+# result of a statement that outlives the 50-second Statement Execution wait.
+USER_API_SCOPES = ("sql", "genie")
+GOLD_TABLES = ("claims", "claim_lines", "members", "providers", "payments", "enrollments", "data_quality")
 
 
-def app_spec(warehouse_id: str) -> dict[str, object]:
+def app_spec(warehouse_id: str, authorization_mode: str) -> dict[str, object]:
     """Return the stable Databricks App definition used for create and update."""
+    if authorization_mode not in ("user", "app"):
+        raise ValueError("authorization_mode must be user or app")
     return {
         "description": "Governed X12 health-plan analytics",
         "resources": [{
@@ -24,9 +29,9 @@ def app_spec(warehouse_id: str) -> dict[str, object]:
             "description": "Executes read-only queries against curated X12 Gold tables",
             "sql_warehouse": {"id": warehouse_id, "permission": "CAN_USE"},
         }],
-        # Fixed SQL routes use the App service principal and its explicit Gold-only
-        # grants. The viewer token is requested only for interactive Genie calls.
-        "user_api_scopes": list(USER_API_SCOPES),
+        # User mode forwards each viewer's token for SQL and Genie; app mode
+        # requests no user scopes and runs both as the App service principal.
+        "user_api_scopes": list(USER_API_SCOPES) if authorization_mode == "user" else [],
     }
 
 
@@ -64,6 +69,10 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--app-dir", type=Path, required=True)
     parser.add_argument("--state", type=Path, default=Path("deployment-state.json"))
+    parser.add_argument(
+        "--viewer-group",
+        help="User mode: grant this group USE CATALOG, USE SCHEMA, and SELECT on the Gold tables and CAN USE on the App",
+    )
     args = parser.parse_args()
 
     from databricks.sdk import WorkspaceClient
@@ -71,10 +80,11 @@ def main() -> None:
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     app_name = manifest["app"]["name"]
     warehouse_id = manifest["sql_warehouse_id"]
+    authorization_mode = manifest["app"].get("authorization_mode", "user")
     profile_args = ["--profile", args.profile]
 
     existing = run(["databricks", "apps", "get", app_name, "--output", "json", *profile_args], allow_failure=True)
-    definition = app_spec(warehouse_id)
+    definition = app_spec(warehouse_id, authorization_mode)
     if existing.returncode:
         run([
             "databricks", "apps", "create",
@@ -99,15 +109,41 @@ def main() -> None:
     catalog = manifest["destination"]["catalog"]
     schema = manifest["destination"]["schema"]
     prefix = manifest["destination"]["table_prefix"]
-    grantee = principal(app_principal)
-    execute(client, warehouse_id, f"GRANT USE CATALOG ON CATALOG `{catalog}` TO {grantee}")
-    execute(client, warehouse_id, f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO {grantee}")
-    for name in ("claims", "claim_lines", "members", "providers", "payments", "enrollments", "data_quality"):
-        execute(
-            client,
-            warehouse_id,
-            f"GRANT SELECT ON TABLE `{catalog}`.`{schema}`.`{prefix}gold_{name}` TO {grantee}",
-        )
+    state = json.loads(args.state.read_text(encoding="utf-8")) if args.state.exists() else {}
+
+    def grant_gold(grantee: str) -> None:
+        execute(client, warehouse_id, f"GRANT USE CATALOG ON CATALOG `{catalog}` TO {grantee}")
+        execute(client, warehouse_id, f"GRANT USE SCHEMA ON SCHEMA `{catalog}`.`{schema}` TO {grantee}")
+        for name in GOLD_TABLES:
+            execute(
+                client,
+                warehouse_id,
+                f"GRANT SELECT ON TABLE `{catalog}`.`{schema}`.`{prefix}gold_{name}` TO {grantee}",
+            )
+
+    grants: dict[str, object] = {"app_service_principal": "none (user mode)"}
+    if authorization_mode == "app":
+        # The App identity reads Gold and runs Genie, so it needs both.
+        grant_gold(principal(app_principal))
+        if state.get("genie_space_id"):
+            run([
+                "databricks", "api", "patch", f"/api/2.0/permissions/genie/{state['genie_space_id']}",
+                "--json", json.dumps({"access_control_list": [
+                    {"service_principal_name": app_principal, "permission_level": "CAN_RUN"},
+                ]}),
+                *profile_args,
+            ])
+        grants = {"app_service_principal": "Gold SELECT and Genie CAN_RUN"}
+    elif args.viewer_group:
+        grant_gold(principal(args.viewer_group))
+        run([
+            "databricks", "apps", "update-permissions", app_name,
+            "--json", json.dumps({"access_control_list": [
+                {"group_name": args.viewer_group, "permission_level": "CAN_USE"},
+            ]}),
+            *profile_args,
+        ])
+        grants["viewer_group"] = f"{args.viewer_group}: Gold SELECT and App CAN_USE"
 
     user_name = client.current_user.me().user_name
     workspace_path = f"/Workspace/Users/{user_name}/{app_name}"
@@ -131,10 +167,21 @@ def main() -> None:
             "--mode", "SNAPSHOT", "--timeout", "20m", *profile_args,
         ])
     app = json.loads(run(["databricks", "apps", "get", app_name, "--output", "json", *profile_args]).stdout)
-    state = json.loads(args.state.read_text(encoding="utf-8")) if args.state.exists() else {}
-    state.update({"app_name": app_name, "app_url": app.get("url"), "app_service_principal": app_principal})
+    state.update({
+        "app_name": app_name,
+        "app_url": app.get("url"),
+        "app_service_principal": app_principal,
+        "authorization_mode": authorization_mode,
+        "user_api_scopes": app.get("user_api_scopes") or [],
+    })
     args.state.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"action": action, "app_name": app_name, "url": app.get("url"), "gold_grants": 7}, indent=2))
+    print(json.dumps({
+        "action": action,
+        "app_name": app_name,
+        "url": app.get("url"),
+        "authorization_mode": authorization_mode,
+        "grants": grants,
+    }, indent=2))
 
 
 if __name__ == "__main__":

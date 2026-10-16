@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
+import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +72,30 @@ def snapshot() -> dict[str, object]:
     }
 
 
+def rebuild_dist(workdir: Path) -> Path:
+    """Build the UI from a clean copy of the locked frontend source and lockfile."""
+    source = workdir / "frontend"
+    shutil.copytree(
+        TEMPLATE / "frontend",
+        source,
+        ignore=shutil.ignore_patterns("dist", "node_modules", ".DS_Store"),
+    )
+    subprocess.run(["npm", "ci", "--no-audit", "--no-fund"], cwd=source, check=True, capture_output=True)
+    subprocess.run(["npm", "run", "typecheck"], cwd=source, check=True, capture_output=True)
+    subprocess.run(["npm", "run", "build"], cwd=source, check=True, capture_output=True)
+    return source / "dist"
+
+
+def same_tree(left: Path, right: Path) -> bool:
+    comparison = filecmp.dircmp(left, right, ignore=[".DS_Store"])
+    if comparison.left_only or comparison.right_only or comparison.funny_files:
+        return False
+    _, mismatch, errors = filecmp.cmpfiles(left, right, comparison.common_files, shallow=False)
+    if mismatch or errors:
+        return False
+    return all(same_tree(left / name, right / name) for name in comparison.common_dirs)
+
+
 def validate_contract() -> dict[str, bool]:
     backend = (TEMPLATE / "app.py").read_text(encoding="utf-8")
     shell = (TEMPLATE / "frontend" / "src" / "Shell.tsx").read_text(encoding="utf-8")
@@ -83,21 +110,35 @@ def validate_contract() -> dict[str, bool]:
         "semantic_version": len(str(config.get("template_version", "")).split(".")) == 3,
         "compiled_frontend": (TEMPLATE / "frontend" / "dist" / "index.html").exists(),
         "frontend_typecheck": "typecheck" in package.get("scripts", {}),
+        "authorization_mode_configurable": (
+            schema["properties"].get("authorization_mode", {}).get("enum") == ["user", "app"]
+            and "authorization_mode" in schema.get("required", [])
+            and config.get("authorization_mode") in ("user", "app")
+        ),
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--update-lock", action="store_true", help="Approve the current canonical source hashes")
-    parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument(
+        "--update-lock", action="store_true",
+        help="Rebuild frontend/dist from a clean copy and approve the current hashes (template changes only)",
+    )
+    parser.add_argument("--skip-build", action="store_true", help="Skip the reproducible-build check (offline)")
     args = parser.parse_args()
 
-    if not args.skip_build:
-        subprocess.run(["npm", "run", "typecheck"], cwd=TEMPLATE / "frontend", check=True)
-        subprocess.run(["npm", "run", "build"], cwd=TEMPLATE / "frontend", check=True)
+    checks: dict[str, bool] = {}
+    if args.update_lock or not args.skip_build:
+        with tempfile.TemporaryDirectory(prefix="x12-app-build-") as workdir:
+            rebuilt = rebuild_dist(Path(workdir))
+            if args.update_lock:
+                shutil.rmtree(TEMPLATE / "frontend" / "dist", ignore_errors=True)
+                shutil.copytree(rebuilt, TEMPLATE / "frontend" / "dist")
+            # A byte-identical clean rebuild proves dist/ is the build of the locked source.
+            checks["rebuild_matches_dist"] = same_tree(rebuilt, TEMPLATE / "frontend" / "dist")
 
     current = snapshot()
-    checks = validate_contract()
+    checks.update(validate_contract())
     if args.update_lock:
         LOCK.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

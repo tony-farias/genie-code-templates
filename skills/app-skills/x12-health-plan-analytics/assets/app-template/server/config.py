@@ -54,14 +54,34 @@ def threshold(name: str, default: float) -> float:
     return float(load_config().get("benchmark", {}).get(name, default))
 
 
+AUTHORIZATION_MODES = ("user", "app")
+
+
+def authorization_mode() -> str:
+    """Data identity for SQL and Genie: "user" (the signed-in viewer) or "app"."""
+    mode = str(load_config().get("authorization_mode", "user"))
+    if mode not in AUTHORIZATION_MODES:
+        raise RuntimeError(f"authorization_mode must be one of {', '.join(AUTHORIZATION_MODES)}")
+    return mode
+
+
 def app_workspace_client() -> WorkspaceClient:
-    """Use the App service principal for fixed, shared Gold analytics."""
+    """The App service principal, used for SQL and Genie only in app mode."""
     profile = os.environ.get("DATABRICKS_PROFILE")
     return WorkspaceClient(profile=profile) if profile else WorkspaceClient()
 
 
+def data_workspace_client(request: Request) -> WorkspaceClient:
+    """Client for Gold SQL and Genie under the configured authorization mode.
+
+    In user mode a request without a forwarded viewer token fails; it never
+    falls back to the App service principal.
+    """
+    return viewer_workspace_client(request) if authorization_mode() == "user" else app_workspace_client()
+
+
 def viewer_workspace_client(request: Request) -> WorkspaceClient:
-    """Use the forwarded viewer identity for interactive Genie requests only."""
+    """The signed-in viewer, from the forwarded user-authorization token."""
     token = request.headers.get("x-forwarded-access-token")
     if not token:
         raise RuntimeError("Databricks did not forward a viewer access token")

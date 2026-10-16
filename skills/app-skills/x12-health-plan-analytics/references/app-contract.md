@@ -48,7 +48,7 @@ Benchmark basis is `procedure` or `diagnosis`. The backend computes peer statist
 ## Safety boundary
 
 - Query only configured Gold tables.
-- Use the Gold-only App service principal for all fixed SQL routes. Request only `dashboards.genie` for interactive Genie, always use its forwarded viewer token, and never bypass a viewer authorization failure with service-principal fallback.
+- Every Gold SQL route and Genie call uses the identity set by `authorization_mode` in `app-config.json`. In `user` mode (the default) that is the forwarded viewer token, from the App's `sql` and `genie` user scopes; a missing or denied viewer token is an error and is never retried as the App service principal. In `app` mode it is the App service principal, which then needs Gold `SELECT` and Genie `CAN RUN`.
 - Never return raw X12, parser JSON, names, addresses, exact birth dates, or direct member identifiers.
 - Member keys shown in the App are SHA-256 pseudonyms and are visually shortened.
 - Utilization index is member total claim amount divided by the population median. Label it as utilization context, never a clinical risk score.
@@ -60,11 +60,12 @@ Benchmark basis is `procedure` or `diagnosis`. The backend computes peer statist
 The template uses semantic versions. A visual, route, schema, or interaction change requires:
 
 1. Update the editable source.
-2. Build the frontend.
-3. Run `scripts/verify_app_template.py`.
+2. Run `scripts/verify_app_template.py --update-lock`. It rebuilds `frontend/dist` from a clean copy of the locked source with `npm ci`, then approves the new hashes.
+3. Run `scripts/verify_app_template.py`. Without `--update-lock`, it requires a clean rebuild to match the committed `frontend/dist` byte-for-byte.
 4. Inspect all local preview surfaces.
 5. Approve intentional screenshots with `scripts/visual_regression.py --approve`.
-6. Update the source lock with `scripts/verify_app_template.py --update-lock`.
-7. Bump the template version for any externally observable change.
+6. Bump the template version for any externally observable change.
+
+After deployment, `scripts/verify_app_parity.py` downloads the served shell and every compiled asset from the running App and compares each with the lock.
 
 Ordinary deployments must run the gates without either approval flag. A mismatch is a deployment failure, not an invitation to regenerate the UI.

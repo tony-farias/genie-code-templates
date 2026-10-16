@@ -14,7 +14,8 @@
     "branding",
     "benchmark",
     "features",
-    "tables"
+    "tables",
+    "authorization_mode"
   ],
   "properties": {
     "template_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
@@ -24,6 +25,7 @@
     "genie_space_id": { "type": "string", "minLength": 1 },
     "genie_agent_id": { "type": "string" },
     "genie_url": { "type": "string", "minLength": 1 },
+    "authorization_mode": { "type": "string", "enum": ["user", "app"] },
     "branding": {
       "type": "object",
       "additionalProperties": false,

@@ -19,7 +19,7 @@ class AppContractTests(unittest.TestCase):
         config = json.loads((TEMPLATE / "app-config.json").read_text(encoding="utf-8"))
         package = json.loads((TEMPLATE / "frontend" / "package.json").read_text(encoding="utf-8"))
         manifest_builder = (ROOT / "scripts" / "build_deployment_manifest.py").read_text(encoding="utf-8")
-        self.assertEqual("1.0.1", config["template_version"])
+        self.assertEqual("1.1.0", config["template_version"])
         self.assertEqual(config["template_version"], package["version"])
         self.assertIn(f'"template_version": "{config["template_version"]}"', manifest_builder)
 
@@ -68,22 +68,22 @@ class AppContractTests(unittest.TestCase):
             self.assertTrue(image.is_file(), name)
             self.assertGreater(image.stat().st_size, 10_000, name)
 
-    def test_app_uses_service_principal_sql_and_viewer_scoped_genie(self) -> None:
-        definition = app_spec("warehouse-id")
-        self.assertEqual(("dashboards.genie",), USER_API_SCOPES)
-        self.assertEqual(["dashboards.genie"], definition["user_api_scopes"])
-        self.assertEqual(
-            "warehouse-id",
-            definition["resources"][0]["sql_warehouse"]["id"],
-        )
+    def test_user_mode_requests_sql_and_genie_scopes(self) -> None:
+        definition = app_spec("warehouse-id", "user")
+        self.assertEqual(("sql", "genie"), USER_API_SCOPES)
+        self.assertEqual(["sql", "genie"], definition["user_api_scopes"])
+        self.assertEqual("warehouse-id", definition["resources"][0]["sql_warehouse"]["id"])
+        self.assertEqual([], app_spec("warehouse-id", "app")["user_api_scopes"])
 
+    def test_every_data_call_uses_the_configured_identity(self) -> None:
         backend = (TEMPLATE / "app.py").read_text(encoding="utf-8")
         config = (TEMPLATE / "server" / "config.py").read_text(encoding="utf-8")
-        self.assertIn("def app_workspace_client()", config)
-        self.assertIn("def viewer_workspace_client(request: Request)", config)
-        self.assertEqual(7, backend.count("app_workspace_client()"))
-        self.assertEqual(2, backend.count("viewer_workspace_client(request)"))
-
+        self.assertIn("def data_workspace_client(request: Request)", config)
+        self.assertNotIn("app_workspace_client()", backend)
+        self.assertNotIn("viewer_workspace_client(", backend)
+        self.assertEqual(9, backend.count("data_workspace_client(request)"))
+        template_config = json.loads((TEMPLATE / "app-config.json").read_text(encoding="utf-8"))
+        self.assertEqual("user", template_config["authorization_mode"])
 
 if __name__ == "__main__":
     unittest.main()

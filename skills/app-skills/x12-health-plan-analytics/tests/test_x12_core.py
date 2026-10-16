@@ -8,12 +8,19 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from generate_synthetic_x12 import generate_records
+from generate_synthetic_x12 import PROVIDER_NAMES, fictional_npi, generate_records
 from discover_x12_sources import (
+    FILE_KEY_COLUMN,
     assess_bronze_readiness,
     choose_record_key,
+    evaluated_candidate,
+    feature_coverage,
+    key_evidence_for,
+    match_likelihood,
+    parser_dry_run,
     score_candidate,
     score_record_key_candidate,
+    score_volume,
 )
 from x12_core import classify_x12
 
@@ -84,6 +91,66 @@ class X12CoreTests(unittest.TestCase):
         self.assertEqual("not_ready", readiness["status"])
         self.assertIn("source_record_key_not_detected", readiness["blocking_issues"])
         self.assertLess(readiness["score"], 100)
+
+
+    def test_feature_coverage_follows_transaction_mix(self) -> None:
+        self.assertEqual(
+            {"provider_analysis": "supported", "siu_letters": "supported", "member_utilization": "supported",
+             "payment_analysis": "missing", "coverage_context": "missing"},
+            feature_coverage(["837"]),
+        )
+        self.assertNotIn("missing", feature_coverage(["834", "835", "837"]).values())
+
+    def test_match_likelihood_bands(self) -> None:
+        coverage = feature_coverage(["837"])
+        self.assertEqual("high", match_likelihood({"score": 100, "status": "ready"}, coverage)["band"])
+        self.assertEqual("medium", match_likelihood({"score": 75, "status": "needs_review"}, coverage)["band"])
+        self.assertEqual("low", match_likelihood({"score": 40, "status": "not_ready"}, coverage)["band"])
+        self.assertEqual("unknown", match_likelihood({"score": 0, "status": "access_failed"}, coverage)["band"])
+        self.assertEqual(["coverage_context", "payment_analysis"], match_likelihood({"score": 100, "status": "ready"}, coverage)["missing_features"])
+
+    def test_volume_candidate_uses_file_paths_and_never_returns_payloads(self) -> None:
+        records = generate_records(claims=10, seed=42, include_negative=False)
+        payloads = [str(record["edi_payload"]) for record in records[:25]]
+        paths = [f"/Volumes/c/s/v/file_{index}.x12" for index in range(len(payloads))]
+        key = key_evidence_for(FILE_KEY_COLUMN, "STRING", 100, paths, len(payloads))
+        candidate = evaluated_candidate({"source_kind": "volume", "volume_path": "/Volumes/c/s/v"}, payloads, key, 25, False)
+        self.assertEqual("ready", candidate["bronze_readiness"]["status"])
+        self.assertEqual("high", candidate["match_likelihood"]["band"])
+        serialized = str(candidate)
+        self.assertNotIn("ISA*", serialized)
+        self.assertNotIn("file_0.x12", serialized)
+
+    def test_parser_dry_run_reports_counts_only(self) -> None:
+        result = parser_dry_run([str(generate_records(1, 7, False)[0]["edi_payload"])])
+        self.assertIn(result["status"], {"completed", "skipped"})
+        self.assertNotIn("ISA*", str(result))
+
+    def test_volume_names_rank_x12_landing_zones_first(self) -> None:
+        self.assertGreater(score_volume("x12_inbound", ""), score_volume("images", ""))
+
+
+    def test_generator_has_realistic_variety_and_fictional_npis(self) -> None:
+        records = generate_records(claims=720, seed=42, include_negative=False)
+        payloads = [str(record["edi_payload"]) for record in records]
+        npis = {segment.split("*")[-1] for payload in payloads for segment in payload.split("~")
+                if segment.strip().startswith("NM1*85")}
+        self.assertEqual(len(PROVIDER_NAMES), len(npis))
+        self.assertTrue(any("CLP*" in payload and "*4*" in payload.split("CLP*", 1)[1][:20] for payload in payloads))
+        self.assertGreater(len({payload.split("SV1*HC:", 1)[1][:5] for payload in payloads if "SV1*HC:" in payload}), 8)
+
+        def luhn_valid(npi: str) -> bool:
+            digits = [int(d) for d in "80840" + npi]
+            total = 0
+            for position, digit in enumerate(reversed(digits)):
+                doubled = digit * 2 if position % 2 == 1 else digit
+                total += doubled - 9 if doubled > 9 else doubled
+            return total % 10 == 0
+
+        self.assertFalse(any(luhn_valid(fictional_npi(number)) for number in range(1, len(PROVIDER_NAMES) + 1)))
+
+    def test_generator_is_deterministic(self) -> None:
+        self.assertEqual(generate_records(5, 7, True), generate_records(5, 7, True))
 
 
 if __name__ == "__main__":

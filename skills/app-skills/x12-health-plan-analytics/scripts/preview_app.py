@@ -204,7 +204,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "product_name": "FWA Shield",
                     "plan_name": "Health Plan Analytics",
                     "segment": "Governed X12 claims and payment analytics",
-                    "template_version": "1.0.1",
+                    "template_version": "1.1.0",
                     "source": "health_plan_demo.x12_analytics",
                     "genie_url": "https://example.invalid/genie",
                     "features": {"provider_analysis": True, "letters": True, "embedded_genie": True, "member_utilization": True},

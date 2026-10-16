@@ -7,6 +7,8 @@ import argparse
 import json
 from pathlib import Path
 
+from build_genie_config import DESCRIPTION
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -14,6 +16,7 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--state", type=Path, default=Path("deployment-state.json"))
+    parser.add_argument("--viewer-group", help="Grant this group CAN RUN; viewers run Genie as themselves in user mode")
     args = parser.parse_args()
 
     from databricks.sdk import WorkspaceClient
@@ -28,7 +31,7 @@ def main() -> None:
     title = manifest["genie"]["title"]
     payload = {
         "title": title,
-        "description": "Governed X12 claims, payments, enrollment, and aggregate parser-quality analytics. Raw X12 and direct member identifiers are excluded.",
+        "description": DESCRIPTION,
         "warehouse_id": manifest["sql_warehouse_id"],
         "parent_path": f"/Users/{user_name}",
         "serialized_space": json.dumps(config, separators=(",", ":"), sort_keys=True),
@@ -54,6 +57,10 @@ def main() -> None:
         action = "created"
     if not space_id:
         raise RuntimeError("Genie API did not return a space ID")
+    if args.viewer_group:
+        client.api_client.do("PATCH", f"/api/2.0/permissions/genie/{space_id}", body={
+            "access_control_list": [{"group_name": args.viewer_group, "permission_level": "CAN_RUN"}],
+        })
 
     state = json.loads(args.state.read_text(encoding="utf-8")) if args.state.exists() else {}
     host = client.config.host.rstrip("/")

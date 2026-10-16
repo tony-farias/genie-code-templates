@@ -58,8 +58,12 @@ def main() -> None:
     schema = manifest["destination"]["schema"]
     prefix = manifest["destination"]["table_prefix"]
     fq = lambda name: f"{catalog}.{schema}.{prefix}gold_{name}"
+    authorization_mode = manifest["app"].get("authorization_mode", "user")
+    if authorization_mode not in ("user", "app"):
+        raise RuntimeError("Deployment manifest authorization_mode must be user or app")
     config = {
         "template_version": manifest["app"]["template_version"],
+        "authorization_mode": authorization_mode,
         "catalog": catalog,
         "schema": schema,
         "warehouse_id": manifest["sql_warehouse_id"],
@@ -92,6 +96,7 @@ def main() -> None:
     print(json.dumps({
         "output": str(args.output),
         "template_version": config["template_version"],
+        "authorization_mode": authorization_mode,
         "css_sha256": style_hash,
     }, indent=2))
 

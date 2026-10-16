@@ -22,11 +22,12 @@ from databricksx12.hls.mapinarrow_functions import from_edi_exploded, get_explod
 
 
 PARSER_COMMIT = "ac6d84d3f322310816a55a43569242afe295b4c5"
-SKILL_VERSION = "0.2.0"
+SKILL_VERSION = "0.3.0"
 
 
 for name, default in (
     ("source_table", ""),
+    ("source_volume_path", ""),
     ("payload_column", "edi_payload"),
     ("primary_key_column", "record_id"),
     ("target_catalog", ""),
@@ -36,14 +37,22 @@ for name, default in (
     dbutils.widgets.text(name, default)
 
 source_table = dbutils.widgets.get("source_table")
+source_volume_path = dbutils.widgets.get("source_volume_path").rstrip("/")
 payload_column = dbutils.widgets.get("payload_column")
 primary_key_column = dbutils.widgets.get("primary_key_column")
 target_catalog = dbutils.widgets.get("target_catalog")
 target_schema = dbutils.widgets.get("target_schema")
 table_prefix = dbutils.widgets.get("table_prefix")
 
-if not all((source_table, payload_column, primary_key_column, target_catalog, target_schema)):
-    raise ValueError("source_table, payload_column, primary_key_column, target_catalog, and target_schema are required")
+if bool(source_table) == bool(source_volume_path):
+    raise ValueError("Set exactly one of source_table or source_volume_path")
+if source_volume_path and not source_volume_path.startswith("/Volumes/"):
+    raise ValueError("source_volume_path must be a /Volumes/<catalog>/<schema>/<volume>/... directory")
+if source_table and not (payload_column and primary_key_column):
+    raise ValueError("payload_column and primary_key_column are required for a table source")
+if not (target_catalog and target_schema):
+    raise ValueError("target_catalog and target_schema are required")
+source_label = source_table or source_volume_path
 
 
 def quote(value: str) -> str:
@@ -143,19 +152,33 @@ validate_x12_udf = F.udf(validate_x12, classification_schema)
 
 # COMMAND ----------
 
-available_columns = set(spark.table(source_table).columns)
-transaction_type_expr = (
-    F.col("transaction_type").cast("string")
-    if "transaction_type" in available_columns
-    else F.lit(None).cast("string")
-)
-source = (
-    spark.table(source_table)
-    .select(
+if source_volume_path:
+    # One row per file, as the parser expects: the whole file is the payload and
+    # its path is the source-record key. Spark skips zero-byte files, which carry no X12.
+    raw_source = (
+        spark.read.format("binaryFile")
+        .option("recursiveFileLookup", "true")
+        .load(source_volume_path)
+        .select(
+            F.regexp_replace("path", "^dbfs:", "").alias("source_record_id"),
+            F.decode("content", "UTF-8").alias("raw_payload"),
+            F.lit(None).cast("string").alias("declared_transaction_type"),
+        )
+    )
+else:
+    available_columns = set(spark.table(source_table).columns)
+    transaction_type_expr = (
+        F.col("transaction_type").cast("string")
+        if "transaction_type" in available_columns
+        else F.lit(None).cast("string")
+    )
+    raw_source = spark.table(source_table).select(
         F.col(primary_key_column).cast("string").alias("source_record_id"),
         F.col(payload_column).cast("string").alias("raw_payload"),
         transaction_type_expr.alias("declared_transaction_type"),
     )
+source = (
+    raw_source
     .withColumn("classification", validate_x12_udf("raw_payload"))
     .withColumn("payload_hash", F.col("classification.payload_hash"))
     .withColumn(
@@ -165,7 +188,7 @@ source = (
 )
 
 bronze = source.select(
-    F.lit(source_table).alias("source_table"),
+    F.lit(source_label).alias("source_table"),
     "source_record_id",
     "payload_hash",
     "transaction_type",

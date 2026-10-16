@@ -1,5 +1,7 @@
 # Health Plan Analytics: X12 Pipeline + App Deploy Skill
 
+![FWA Shield app tour, with fictional data](../../../docs/media/x12-health-plan-tour.gif)
+
 Use this Genie Code skill to generate the Health Plan Analytics solution inside a Databricks customer environment and connect it to the customer’s governed X12 data.
 
 The skill discovers a suitable Unity Catalog source, assesses whether it is ready for ingestion, deploys the Databricks X12 parser pipeline, publishes de-identified analytics tables, and configures a consistent Databricks App and Genie Space. The App’s design and behavior come from a versioned golden template, so repeated deployments look and work the same.
@@ -20,7 +22,9 @@ Provider variance is a screening signal, not a finding of fraud, waste, abuse, o
 
 ## What data is needed?
 
-The skill expects raw X12 5010 transactions in a Unity Catalog table or view. It does not use an already-normalized claims table as a substitute for the X12 source.
+The skill expects raw X12 5010 transactions, either as files in a Unity Catalog Volume (the parser's native input: one whole file per row, keyed by its path) or as a Unity Catalog table or view with one payload per row. It does not use an already-normalized claims table as a substitute for the X12 source.
+
+The table-source contract is below. A Volume source needs only `READ VOLUME` and X12 files; the file path serves as the source-record key.
 
 ### Minimum source contract
 
@@ -54,7 +58,7 @@ The read-only discovery stage inspects Unity Catalog metadata for `STRING` and `
 - `payload`, `message`, `body`, or `raw`
 - generic payload names such as `value`, `content`, `data`, `text`, or `record` when the surrounding table metadata indicates X12
 
-The current automated implementation discovers tables and views. Files in Unity Catalog Volumes should first be exposed through a governed table or view.
+Discovery also lists the catalog's Volumes and samples their files with `read_files(..., wholeText => true)`, so X12 that lands as files needs no wrapper table. Each candidate gets a `match_likelihood` band (high, medium, low, or unknown) derived from the readiness score below, a `feature_coverage` map showing which App capabilities its 837, 835, and 834 mix can power, and, with `--parser-dry-run`, the pinned parser's parse counts on the sample.
 
 ## First output: Bronze source-readiness report
 
@@ -165,7 +169,7 @@ The solution uses four distinct identities. Do not give every identity the union
 | Verify outputs | `CAN USE` on the SQL warehouse plus `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the generated Bronze, Silver, and Gold tables and relevant `information_schema` metadata. |
 | Create or update Genie | Permission to create a Genie Space in the deployment identity's workspace folder, or `CAN MANAGE` on the existing Space; `CAN USE` on the warehouse; and `SELECT` on all configured Gold tables. |
 | Create or update the App | Permission to create Databricks Apps, or `CAN MANAGE` on the existing App; `CAN USE` on the bound SQL warehouse; and write access to the App source path in Workspace Files. |
-| Grant App data access | The deployment identity must own or have `MANAGE` authority on the destination catalog, schema, and Gold tables so it can grant the App service principal `USE CATALOG`, `USE SCHEMA`, and `SELECT`. If it cannot grant those privileges, a Unity Catalog owner or metastore administrator must perform this step. |
+| Grant data access | The deployment identity must own or have `MANAGE` authority on the destination catalog, schema, and Gold tables so it can grant the viewer group (user mode) or the App service principal (App mode) `USE CATALOG`, `USE SCHEMA`, and `SELECT`. If it cannot, a Unity Catalog owner or metastore administrator must perform this step. |
 
 If a separate service principal is configured as the job `run_as` identity, grant that principal the source and destination Unity Catalog permissions above. Granting them only to the person who deploys the bundle is not sufficient.
 
@@ -197,21 +201,20 @@ The run identity does not need access to Databricks Apps or Genie.
 
 ### App service principal
 
-`scripts/deploy_app.py` creates or updates the App, retrieves its Databricks-managed service principal, binds the selected warehouse with `CAN USE`, and grants only:
+`scripts/deploy_app.py` creates or updates the App and binds the selected warehouse with `CAN USE`. What it grants depends on the authorization mode in the manifest:
 
-- `USE CATALOG` on the destination catalog;
-- `USE SCHEMA` on the destination schema;
-- `SELECT` on the seven configured Gold tables: `claims`, `claim_lines`, `members`, `providers`, `payments`, `enrollments`, and `data_quality`.
+- **User mode (default):** the App requests the `sql` and `genie` user scopes and its service principal receives no data grants. With `--viewer-group`, the script grants that group `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the seven Gold tables and `CAN USE` on the App.
+- **App mode:** the App requests no user scopes, and its service principal receives `USE CATALOG`, `USE SCHEMA`, `SELECT` on the seven Gold tables (`claims`, `claim_lines`, `members`, `providers`, `payments`, `enrollments`, and `data_quality`), and `CAN RUN` on the Genie Space.
 
-The App service principal must not receive `SELECT` on the customer source, Bronze raw X12, Silver parser JSON, or quarantine tables.
+Neither the App service principal nor the viewers receive `SELECT` on the customer source, Bronze raw X12, Silver parser JSON, or quarantine tables.
 
 ### App viewer permissions
 
 | App capability | Viewer requirements |
 |---|---|
-| Dashboard and SIU Workbench | `CAN USE` on the Databricks App. These fixed SQL routes execute as the App service principal, so viewers do not inherit access to Bronze or Silver data. |
-| Embedded Genie | `CAN USE` on the App, permission to run the configured Genie Space, `CAN USE` on its SQL warehouse, and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the configured Gold tables. |
-| Forwarded identity | The App requests only the `dashboards.genie` user API scope. A missing or denied viewer token is returned as an error and is never replaced with the App service-principal identity. |
+| Dashboard and SIU Workbench | `CAN USE` on the App. In user mode these routes run as the viewer, who also needs `CAN USE` on the warehouse and `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the Gold tables. In App mode they run as the App service principal. |
+| Embedded Genie | In user mode, `CAN RUN` on the Genie Space plus the same Gold and warehouse access. In App mode, only `CAN USE` on the App. |
+| Forwarded identity | User mode requests the `sql` and `genie` user scopes (not `sql:restricted-query`, which cannot fetch results of queries that outlive the 50-second wait). A missing or denied viewer token is an error and is never replaced with the App service-principal identity. |
 
 Share the App and Genie Space with the intended users or groups after deployment. Creation does not automatically grant every workspace user access.
 
@@ -254,7 +257,7 @@ No GPU, Model Serving endpoint, Vector Search index, Lakebase database, or serve
 10. Verify the pinned App source and approved visual baselines.
 11. Generate only `app-config.json`, deploy the App, and run App and Genie smoke tests.
 
-The App uses split authorization. Fixed dashboard and SIU queries run as the App service principal, which receives read-only access only to the approved Gold tables and selected warehouse. Interactive Genie requests use the forwarded viewer identity with only the `dashboards.genie` scope. A denied viewer request is never retried as the App service principal.
+By default the App uses user authorization: dashboard, SIU, and Genie requests all run with the signed-in viewer's forwarded token, so Unity Catalog applies each viewer's grants, row filters, and masks, and the App service principal holds no data grants. App authorization runs them all as the App service principal instead. A denied viewer request is never retried as the App service principal. Run `scripts/check_x12_permissions.py` before discovery and again before deployment, and `scripts/verify_app_parity.py` after it.
 
 ## Run discovery directly
 
