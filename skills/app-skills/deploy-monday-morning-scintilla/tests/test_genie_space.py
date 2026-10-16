@@ -141,7 +141,8 @@ class DeployGenieSpaceTests(unittest.TestCase):
     def test_update_backs_up_the_named_space_first(self):
         calls, state, backups = self.run_deploy("--space-id", "01fold")
         self.assertEqual(state["action"], "updated")
-        self.assertEqual(backups, ["state.previous-01fold.json"])
+        self.assertEqual(len(backups), 1)
+        self.assertRegex(backups[0], r"^state\.previous-01fold-\d{8}T\d{6}Z\.json$")
         methods = [(method, path.split("?")[0]) for method, path, _ in calls]
         self.assertLess(methods.index(("get", "/api/2.0/genie/spaces/01fold")),
                         methods.index(("patch", "/api/2.0/genie/spaces/01fold")))

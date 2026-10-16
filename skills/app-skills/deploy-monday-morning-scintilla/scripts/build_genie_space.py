@@ -54,7 +54,9 @@ TABLES = {
     ),
     "store_invt": (
         "Store x item inventory, one snapshot per business date. In-stock rate is 100 * SUM(ty_repl_instock_numerator) / "
-        "SUM(ty_repl_instock_denominator). ty_on_hand_qty is units on hand and ty_on_order_qty units on order. "
+        "SUM(ty_repl_instock_denominator). ty_on_hand_qty is units on hand in the store, ty_in_trnst_qty units in transit "
+        "to it, ty_in_whse_qty units in Walmart distribution centers (DC), and ty_on_order_qty units on order. "
+        "bkrm_adj_qty is a backroom adjustment, not backroom stock. "
         "'Right now' means the latest bus_dt in this table."
     ),
     "store_returns": (
@@ -79,6 +81,9 @@ INSTRUCTIONS = [
     "Days of supply is on-hand units on the latest store_invt bus_dt divided by average daily units sold over the "
     "last 28 days. store_invt holds one snapshot per day, so never add on-hand units across dates.",
     "Rank lowest-rated items among those with more than 20 reviews (omni_item_dim.cust_ratg_cnt > 20).",
+    "This space has no store location areas (sales floor, backroom, receiving). For location questions, say that detail "
+    "is not recorded and show the supply pipeline by item instead: DC, in transit, on hand, and on order. Never relabel "
+    "store_invt columns as location areas.",
     "For lowest, highest, top, bottom, best, or worst stores, items, or SKUs, return only the first 20 rows "
     "(ORDER BY the measure, then LIMIT 20) unless the question asks for another number. Category breakdowns may "
     "list every category.",
@@ -223,6 +228,21 @@ def examples(t: dict[str, str]) -> list[tuple[str, str, str]]:
             f"ROUND(inv.on_hand_units / NULLIF(vel.daily_units, 0), 1) AS days_of_supply "
             f"FROM inv JOIN vel ON inv.category = vel.category ORDER BY days_of_supply",
             "Days of supply by category: latest on-hand snapshot over average daily units for 28 days.",
+        ),
+        (
+            "Show on-hand inventory by store location area (sales floor, backroom, receiving) for my top items. Where is "
+            "stock sitting off the sales floor?",
+            f"WITH top AS (SELECT wm_item_nbr, SUM(sales_amt) AS sales FROM {t['store_sales']} "
+            f"WHERE bus_dt > DATE_SUB((SELECT MAX(bus_dt) FROM {t['store_sales']}), 28) "
+            f"GROUP BY wm_item_nbr ORDER BY sales DESC LIMIT 20) "
+            f"SELECT i.item_name, i.brand_nm, ROUND(top.sales, 0) AS last_4_weeks_sales, "
+            f"SUM(v.ty_in_whse_qty) AS in_distribution_centers, SUM(v.ty_in_trnst_qty) AS in_transit_to_stores, "
+            f"SUM(v.ty_on_hand_qty) AS on_hand_in_stores, SUM(v.ty_on_order_qty) AS on_order "
+            f"FROM top JOIN {t['store_invt']} v ON v.wm_item_nbr = top.wm_item_nbr "
+            f"JOIN {t['item_dim']} i ON i.wm_item_nbr = top.wm_item_nbr "
+            f"WHERE v.bus_dt = (SELECT MAX(bus_dt) FROM {t['store_invt']}) "
+            f"GROUP BY i.item_name, i.brand_nm, top.sales ORDER BY last_4_weeks_sales DESC LIMIT 20",
+            "Location areas are not recorded; show the supply pipeline for the top 20 items by sales instead.",
         ),
         (
             "Which items have the lowest ratings and most negative reviews, and are those quality issues showing up "

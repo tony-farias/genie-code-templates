@@ -10,6 +10,7 @@ group CAN RUN; the App identity needs no access.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -55,7 +56,8 @@ def main() -> None:
         space_id = args.space_id
         # Keep a copy of the space being replaced, so an update can be undone.
         previous = api(args.profile, "get", f"/api/2.0/genie/spaces/{space_id}?include_serialized_space=true")
-        backup = args.output.with_name(f"{args.output.stem}.previous-{space_id}.json")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = args.output.with_name(f"{args.output.stem}.previous-{space_id}-{stamp}.json")
         backup.write_text(json.dumps(previous, indent=2) + "\n", encoding="utf-8")
         payload.pop("parent_path")
         api(args.profile, "patch", f"/api/2.0/genie/spaces/{space_id}", payload)
