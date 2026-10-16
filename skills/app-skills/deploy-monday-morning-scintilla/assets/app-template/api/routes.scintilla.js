@@ -1042,8 +1042,10 @@ export function mountScintillaRoutes(app) {
   // say "the prior period" or "categories" without pinning a window or grain, and
   // Genie would stop to ask the user to define them (reads as "not working").
   // This resolves those to concrete defaults and tells Genie to answer directly.
+  // The category rule applies only to category questions: an unconditional
+  // "break categories down" made Genie split plain trends by category.
   // It is invisible: the on-screen bubble still shows the user's original question.
-  const GENIE_GUIDANCE = ' [Answering guidance: interpret "the prior period" or any unspecified time range as the most recent 4 full weeks compared with the prior 4 weeks. Break categories down at the category level. Give your best answer directly using sensible defaults; do NOT reply with a clarifying question.]';
+  const GENIE_GUIDANCE = ' [Answering guidance: interpret "the prior period" or any unspecified time range as the most recent 4 full weeks compared with the prior 4 weeks. When the question asks about categories, use the category level, not subcategories; otherwise do not split the answer by category. Give your best answer directly using sensible defaults; do NOT reply with a clarifying question.]';
 
   // Ask Genie — the single, canonical endpoint. Uses the real Databricks Genie
   // Conversation API (SP OAuth via genie.js), multi-turn via conversation_id.

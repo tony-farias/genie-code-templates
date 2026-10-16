@@ -6,7 +6,7 @@
     "api/lakebase.js": "83c78957fda15fb31571058802fa32bdb960180b38ce6b5d51c66ac5fded4760",
     "api/ontology_catalog.js": "211c5a57466abe9318364896d170c7dcf431ec8d09617461a4fe197365a5e850",
     "api/personas.js": "75aa1d819453f5699c7c69eb9de7089cd457bc0ab8965321f969f22002fdbe92",
-    "api/routes.scintilla.js": "3ee26c21827883625e7bd1a0cfebb7086bd6bedb009fd5261731535e67242da8",
+    "api/routes.scintilla.js": "26d0dab27f7ed2ef4d8c6cae9979145bd9589389208f74128f4c0bc81f9b21a2",
     "api/sql.js": "8b2801ed7a033a3a786867c5f3be086f4dd9d68c19c219582ad672bd75900292",
     "app.yaml": "115d2feeb9f56695390168b6ae8491cc9de0f6530ba6048280c59968e264d1aa",
     "dist/assets/AgentsPage-CPoMY1VW.js": "1308cb731f8bda08004f39f1e8852063d332f053322e7b2276b548d760c9c869",
@@ -86,5 +86,5 @@
     "tailwind.config.js": "c0cae66804871243ba296c0f087695454fb29a57983ffad598fe603cbc975cb0",
     "vite.config.js": "cda2ce4fb4531a41822cf8d2dd8af4cebb30138b15669c488f4b2be5a304fa0c"
   },
-  "template_version": "1.2.0"
+  "template_version": "1.2.1"
 }

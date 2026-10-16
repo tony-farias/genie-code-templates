@@ -88,9 +88,7 @@ INSTRUCTIONS = [
     "(ORDER BY the measure, then LIMIT 20) unless the question asks for another number. Category breakdowns may "
     "list every category.",
     "Use wm_yr_wk_nbr for weekly trends and label weeks with their first business date.",
-    "Trends over time are totals per week or month unless the question names categories, brands, stores, or channels. "
-    "'Break categories down at the category level' means use omni_dept_desc when categories are asked for; it does "
-    "not mean splitting every answer by category.",
+    "Trends over time are totals per week or month unless the question names categories, brands, stores, or channels.",
     "Answer directly with these defaults. Do not ask a clarifying question when a default applies.",
 ]
 
@@ -136,8 +134,9 @@ APP_QUESTIONS = (
 # The App appends this to every question (GENIE_GUIDANCE in api/routes.scintilla.js).
 APP_GUIDANCE = (
     ' [Answering guidance: interpret "the prior period" or any unspecified time range as the most recent 4 full '
-    'weeks compared with the prior 4 weeks. Break categories down at the category level. Give your best answer '
-    'directly using sensible defaults; do NOT reply with a clarifying question.]'
+    'weeks compared with the prior 4 weeks. When the question asks about categories, use the category level, not '
+    'subcategories; otherwise do not split the answer by category. Give your best answer directly using sensible '
+    'defaults; do NOT reply with a clarifying question.]'
 )
 
 
@@ -219,7 +218,7 @@ def examples(t: dict[str, str]) -> list[tuple[str, str, str]]:
             f"GROUP BY 1 ORDER BY net_sales DESC",
             "In-store (BIS) versus e-commerce (PICKUP, DELIVERY, SFS) net sales.",
         ),
-        # Exact App questions that the App's "category level" guidance otherwise pushes into category splits.
+        # Exact App questions that Genie otherwise tends to split by category.
         (
             "How do brick-and-mortar store sales compare over the last 4 weeks versus the prior 4 weeks, and which "
             "stores are underperforming?",
