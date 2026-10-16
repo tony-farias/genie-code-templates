@@ -17,7 +17,7 @@ Require these existing resources before deployment:
 - one ready Foundation Model endpoint;
 - the licensed Scintilla schema the viewers can already read. In user mode the App reads it directly, and a table map covers tables that use different names, so no views or other objects are created. Use a customer-owned curated schema only for App mode or for a feed that needs more than a rename or a read-only join;
 - one Databricks App with its Databricks-managed service principal;
-- approved Genie Spaces for the capabilities being deployed;
+- one Monday Morning Genie Space over the tables the App reads, created by this skill (step 8) or an existing space its owner approves;
 - one viewer group with `CAN USE` on the App.
 
 Model serving always uses the App service principal. SQL and Genie run under one authorization mode, rendered as `AUTHORIZATION_MODE`:
@@ -61,8 +61,30 @@ In user mode a request without a forwarded token fails; it never falls back to t
    ```
 
 6. Read [references/cloud-feeds.md](references/cloud-feeds.md). Map feeds using column and grain evidence, not names alone. Every table in `REQUIRED_TABLES` (`scripts/app_contract.py`) must be available. When the customer's tables use different names, write `table-map.json` instead of creating views: map each App name to the existing table (`"store_sales": "fact_store_item_sales"`), or to a single read-only `SELECT` when a column needs a join (`"upc_sales": {"select": "SELECT ... FROM fact_upc_sales u LEFT JOIN ..."}`). The App reads those tables as they are. If a feed is missing, stop and report it: the golden UI has no feature flags, so never hide, stub, or regenerate a page to work around a missing feed.
-7. Read [references/architecture.md](references/architecture.md). Produce a customer-specific core plan covering the table map (or curated objects, if any), App configuration, Genie Spaces, validation, costs, and rollback. Have an administrator create or bind any missing Genie Spaces before the deployment gate.
-8. Rerun the preflight at the deployment stage with every confirmed source table and approved Genie Space. Stop unless `ready` is `true`:
+7. Read [references/architecture.md](references/architecture.md). Produce a customer-specific core plan covering the table map (or curated objects, if any), App configuration, the Genie Space, validation, costs, and rollback.
+8. Build the Genie Space behind "Ask Genie". `build_genie_space.py` writes a local definition, with no Databricks calls, over the seven tables the App's Genie questions need, renamed through the same table map. It encodes the App's definitions (net sales, in-stock rate, days of supply, return rate, category, channels) as instructions, join specs, eight example queries, and benchmarks. After approval, create a new space. In user mode, `--viewer-group` grants the viewers `CAN RUN`:
+
+   ```bash
+   python3 scripts/build_genie_space.py \
+     --catalog <licensed-catalog> \
+     --schema <scintilla-schema> \
+     --table-map table-map.json \
+     --output /tmp/monday-morning-genie.json
+   python3 scripts/deploy_genie_space.py \
+     --profile <profile> \
+     --config /tmp/monday-morning-genie.json \
+     --warehouse-id <warehouse-id> \
+     --viewer-group <group-name> \
+     --output /tmp/monday-morning-genie-space.json
+   python3 scripts/smoke_test_genie_space.py \
+     --profile <profile> \
+     --space /tmp/monday-morning-genie-space.json \
+     --config /tmp/monday-morning-genie.json \
+     --all-app-questions
+   ```
+
+   `deploy_genie_space.py` creates a new space unless you pass `--space-id`. Pass `--space-id` only for a space this deployment created, or with its owner's approval; the script saves the previous definition beside `--output` before updating. The smoke test sends every fixed question the App asks, with the App's answering guidance, as the caller. Stop unless `passed` is `true`: each answer must complete with SQL, return rows, and stay within `--max-rows` (100). Use the space ID from the output as `--genie-space-id` below.
+9. Rerun the preflight at the deployment stage with every confirmed source table and approved Genie Space. Stop unless `ready` is `true`:
 
    ```bash
    python3 scripts/check_scintilla_permissions.py \
@@ -82,8 +104,8 @@ In user mode a request without a forwarded token fails; it never falls back to t
    ```
 
    Pass every `REQUIRED_TABLES` entry as `--source-table`; repeat `--genie-space-id` as needed.
-9. Present the final plan and obtain approval before creating or replacing curated objects or deploying App code.
-10. Verify the golden template, render it with resolved IDs only, and deploy the rendered tree unchanged. Render outside any Git worktree, and sync to a new, empty workspace folder:
+10. Present the final plan and obtain approval before creating or replacing curated objects or deploying App code.
+11. Verify the golden template, render it with resolved IDs only, and deploy the rendered tree unchanged. Render outside any Git worktree, and sync to a new, empty workspace folder:
 
     ```bash
     python3 scripts/verify_app_template.py   # add --skip-build when npm is unavailable
@@ -100,7 +122,7 @@ In user mode a request without a forwarded token fails; it never falls back to t
     databricks apps deploy <app-name> --source-code-path <workspace-source-path> --mode SNAPSHOT --profile <profile>
     ```
 
-11. Prove the running App serves the golden UI byte-for-byte and every parameterless UI API route returns JSON. Stop unless `ready` is `true`:
+12. Prove the running App serves the golden UI byte-for-byte and every parameterless UI API route returns JSON. Stop unless `ready` is `true`:
 
     ```bash
     python3 scripts/verify_deployment.py \
@@ -109,8 +131,8 @@ In user mode a request without a forwarded token fails; it never falls back to t
       --output /tmp/monday-morning-ui-parity.json
     ```
 
-12. Treat Lakebase, Vector Search, and a supervisor as separate opt-in expansions. Re-run permission analysis and obtain approval before provisioning any of them.
-13. Validate row counts, dates, join fanout, model responses, and Genie grounding as a viewer, and confirm the runtime identity matches the authorization mode.
+13. Treat Lakebase, Vector Search, and a supervisor as separate opt-in expansions. Re-run permission analysis and obtain approval before provisioning any of them.
+14. Validate row counts, dates, join fanout, model responses, and Genie grounding as a viewer, and confirm the runtime identity matches the authorization mode.
 
 ## Authorization rules
 
@@ -135,6 +157,7 @@ In user mode a request without a forwarded token fails; it never falls back to t
 - Parameterize catalog, schema, warehouse, Genie IDs, model endpoint, App name, and viewer group.
 - Never commit credentials, customer identifiers, or workspace-specific resource IDs.
 - Make destructive replacement or cleanup a separately approved step.
+- Never update or replace an existing Genie Space without its owner's approval. Spaces are often shared and titles are not unique, so never match a space by title.
 - Resolve every resource ID before deployment; placeholders are deployment blockers.
 - Use SDK-typed `ChatMessage` objects when calling `serving_endpoints.query()`.
 - Use the App's `application_id` UUID—not its display name—for Unity Catalog grants.

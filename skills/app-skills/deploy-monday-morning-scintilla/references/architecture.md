@@ -38,7 +38,7 @@ The core deployment consumes, rather than provisions:
 1. The licensed Scintilla schema, read directly in user mode (with a table map for differently named tables), or a customer-owned curated schema for App mode.
 2. A running serverless SQL warehouse.
 3. A Databricks App with its managed service principal.
-4. Approved Genie Spaces supported by the licensed feeds.
+4. The Monday Morning Genie Space over the tables the App reads. The skill builds it from `scripts/build_genie_space.py`; an existing space is used only with its owner's approval.
 5. A ready Foundation Model endpoint available in the target region.
 6. A viewer group with `CAN USE` on the App.
 
@@ -120,7 +120,7 @@ Plain dictionaries are not accepted by SDK versions that serialize messages thro
 - Inventory: every `REQUIRED_TABLES` entry exists with the required join/metric columns.
 - Data: row counts, latest dates, supplier partitions, and join fanout are validated.
 - UI parity and API: `verify_deployment.py` returns `ready: true`, so the served shell and every asset match the lock and every parameterless UI GET route returns JSON 2xx.
-- Genie: approved prompts produce grounded SQL over curated objects only.
+- Genie: `smoke_test_genie_space.py --all-app-questions` passes, so every fixed question the App sends completes with bounded SQL over the space's tables.
 - Model: briefs use the bound endpoint and approved evidence.
 - Security: runtime calls use the selected identity mode and only preflight-approved resources; user-authorized SQL is tested with a real signed-in viewer and never served from a cross-user cache.
 - UX: no mock result is presented as live.

@@ -18,7 +18,7 @@ The administrator must:
 - select a running serverless SQL warehouse and ready Foundation Model endpoint;
 - create the App or approve reuse of an existing App in the same security boundary;
 - bind that warehouse with `CAN USE` and the endpoint with `CAN QUERY`;
-- create or select the supported Genie Spaces;
+- approve creating the Monday Morning Genie Space, or name an existing space and its owner's approval to update it;
 - in user mode, set the App's user authorization scopes to `sql` and `genie`, and grant the viewer group the permissions in [User authorization](#user-authorization-default);
 - in App mode, grant the App `application_id` UUID `USE CATALOG`, `USE SCHEMA`, and `SELECT` on the curated schema, and bind each Genie Space with `CAN RUN`;
 - grant the deployment identity `CAN MANAGE` on the App;
@@ -38,7 +38,7 @@ The administrator can then leave the recurring deployment path. The deployment i
 | Pre-created curated schema (only if used) | `USE SCHEMA`, `CREATE TABLE`, `MODIFY`, `SELECT` |
 | SQL warehouse | `CAN USE` |
 | Existing App | `CAN MANAGE` |
-| Approved Genie Spaces | Access sufficient to inspect and validate them |
+| Monday Morning Genie Space | None up front: the deployment identity creates it in a Workspace folder it can write, owns it with `CAN MANAGE`, and grants the viewer group `CAN RUN` on it. Updating an existing space needs `CAN EDIT` from its owner |
 | App staging path | Write access in Workspace Files |
 
 `CREATE SCHEMA`, `CREATE CATALOG`, and Unity Catalog `MANAGE` are deliberately excluded.
