@@ -71,6 +71,8 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True, help="build_genie_space.py output")
     parser.add_argument("--all-app-questions", action="store_true",
                         help="Ask every fixed question the App sends, not only the sample questions")
+    parser.add_argument("--match", action="append", default=[],
+                        help="Ask only questions containing this text (case-insensitive); repeatable")
     parser.add_argument("--no-app-guidance", action="store_true", help="Send questions without the App's guidance")
     parser.add_argument("--max-rows", type=int, default=100, help="Fail answers with more rows than this")
     parser.add_argument("--timeout", type=int, default=420, help="Seconds per question")
@@ -80,6 +82,10 @@ def main() -> None:
     config = json.loads(args.config.read_text(encoding="utf-8"))
     questions = (list(APP_QUESTIONS) if args.all_app_questions
                  else [item["question"][0] for item in config["config"]["sample_questions"]])
+    if args.match:
+        questions = [q for q in questions if any(text.lower() in q.lower() for text in args.match)]
+        if not questions:
+            raise SystemExit("No question matches --match")
     guidance = "" if args.no_app_guidance else APP_GUIDANCE
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = list(pool.map(

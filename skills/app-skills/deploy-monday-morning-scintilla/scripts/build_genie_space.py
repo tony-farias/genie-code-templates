@@ -88,6 +88,9 @@ INSTRUCTIONS = [
     "(ORDER BY the measure, then LIMIT 20) unless the question asks for another number. Category breakdowns may "
     "list every category.",
     "Use wm_yr_wk_nbr for weekly trends and label weeks with their first business date.",
+    "Trends over time are totals per week or month unless the question names categories, brands, stores, or channels. "
+    "'Break categories down at the category level' means use omni_dept_desc when categories are asked for; it does "
+    "not mean splitting every answer by category.",
     "Answer directly with these defaults. Do not ask a clarifying question when a default applies.",
 ]
 
@@ -195,10 +198,10 @@ def examples(t: dict[str, str]) -> list[tuple[str, str, str]]:
         (
             "How have weekly sales trended over the last 13 weeks?",
             f"SELECT wm_yr_wk_nbr AS walmart_week, MIN(bus_dt) AS week_start, ROUND(SUM(sales_amt), 0) AS net_sales, "
-            f"SUM(qty) AS units FROM {t['store_sales']} "
+            f"SUM(qty) AS units, SUM(scan_cnt) AS scans FROM {t['store_sales']} "
             f"WHERE bus_dt > DATE_SUB((SELECT MAX(bus_dt) FROM {t['store_sales']}), 91) "
             f"GROUP BY wm_yr_wk_nbr ORDER BY walmart_week",
-            "Weekly net sales and units for the last 13 weeks.",
+            "Weekly totals of net sales, units, and scans for the last 13 weeks; also answers units and scan-count trends.",
         ),
         (
             "What were my total sales by category over the last 4 weeks?",
